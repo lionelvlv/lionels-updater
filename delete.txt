@@ -23,3 +23,6 @@ kubejs/server_scripts/lionel/aether_no_flight.js
 # Voxy is switched off in his pack (and Roxy, which loaded it, is gone); CC: Tweaked ships as 1.120.2.
 mods/voxy-*.jar
 # Older CC: Tweaked jars of any version go by mod id (update.ps1 3b), so they need no line here.
+# Entity Culling is out (2026-10-17, Lionel: "remove entity culling since it's built into sodium and chloride"):
+# Sodium culls by chunk section and Chloride by distance; it was also the block entity flicker suspect.
+mods/entityculling-*.jar

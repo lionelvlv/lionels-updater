@@ -1011,13 +1011,33 @@ $argFile = Join-Path $Target 'LAUNCH-ARGUMENTS.txt'
 $argSeen = Join-Path $stateDir 'launch-args.txt'
 $argKey = "$Target | $(if ($javaOk) { $javaExe }) | $memMb | $argLine"
 $lastKey = if (Test-Path -LiteralPath $argSeen) { (Get-Content -LiteralPath $argSeen -TotalCount 1) } else { '' }
-# A picture of the launcher's settings page, numbered like the steps beside it (guide\, shipped in the zip and fetched
-# with the updater for a fresh install; the GitHub copy if it is missing). Opened in the PC's own picture viewer.
+# A picture of the launcher's settings page, its numbered boxes the step numbers of Read-Steps (guide\, shipped in the
+# zip and fetched with the updater for a fresh install; the GitHub copy if it is missing). Opened in the PC's own
+# picture viewer, only when the player asks for it.
 function Show-Guide([string]$name) {
-  if ($env:LIONEL_UPDATER_NO_START) { return }   # test.ps1
+  if ($env:LIONEL_UPDATER_NO_START) { Write-Host '     (picture: not opened in tests)'; return }   # test.ps1
   $local = Join-Path $src "guide\$name"
   $target = if (Test-Path -LiteralPath $local) { $local } else { "https://raw.githubusercontent.com/lionelvlv/lionels-updater/main/guide/$name" }
-  try { Start-Process $target; Write-Host '  (A picture of that page opened, with the same numbers.)' } catch { }
+  try { Start-Process $target; Write-Host '     (The picture opened. Its numbers are these step numbers.)' } catch { Write-Host "     (Could not open it: $target)" }
+}
+
+# Steps for the player to do in a launcher, one at a time: "Step 2 of 4", the value under it (already copied), then
+# Enter to go on, or P and Enter to see the picture first.
+function Read-Steps([object[]]$steps, [string]$picture) {
+  Write-Host '  At any step, type P and press Enter to see a picture of the page, numbered like the steps.'
+  for ($i = 0; $i -lt $steps.Count; $i++) {
+    Write-Host ("`n  Step {0} of {1}: {2}" -f ($i + 1), $steps.Count, $steps[$i][0])
+    if ($steps[$i][1]) {
+      Write-Host "     $($steps[$i][1])" -ForegroundColor White
+      if (-not $env:LIONEL_UPDATER_NO_CLIPBOARD) { try { Set-Clipboard -Value $steps[$i][1]; Write-Host '     (Already copied: just paste.)' } catch { } }
+    }
+    while ($true) {
+      Write-Host '     Press Enter when done (P: picture). ' -NoNewline
+      $answer = [Console]::ReadLine()
+      if ($answer -and $answer.Trim() -ieq 'P') { Show-Guide $picture; continue }
+      break
+    }
+  }
 }
 
 # The Modrinth app's pre-launch hook (12b) is looked for in its own database, read only, the way Find-Packs reads it:
@@ -1104,41 +1124,30 @@ if ($Launcher -eq 'ATLauncher') {
 } elseif ($fromGame) {
   if ($lastKey -ne $argKey) { Write-Host "`nThe speed settings changed: run the updater yourself once to set them (LAUNCH-ARGUMENTS.txt has them)." -ForegroundColor Yellow }
 } else {
-  # The Modrinth app: one paste at a time, each value already copied, beside a picture of that settings page with the
-  # same numbers (guide\, Lionel's screenshots of 2026-10-17; labels also checked in modrinth/code, apps/app-frontend).
+  # The Modrinth app: one step at a time, each value already copied; P shows a picture of that page whose numbered boxes
+  # are these step numbers (guide\, from Lionel's screenshots of 2026-10-17, "the numbers are unintuitive and ... the user
+  # has input to view the image"). Labels also checked in modrinth/code, apps/app-frontend.
   if ($lastKey -ne $argKey) {
-    $steps = @()
-    $steps += , @('2, 3: switch "Custom memory allocation" on, click in the box right of the slider, select all (Ctrl+A) and paste (Ctrl+V):', "$memMb")
-    if ($javaOk) { $steps += , @('4, 5: switch "Custom Java installation" on, click in its box, select all (Ctrl+A) and paste (Ctrl+V):', $javaExe) }
-    $steps += , @('6, 7: switch "Custom Java arguments" on, click in its box, select all (Ctrl+A) and paste (Ctrl+V):', $argLine)
-    Write-Host "`nNEW LAUNCH SETTINGS for the Modrinth app, $($steps.Count) steps." -ForegroundColor Cyan
-    Write-Host '  1: in the Modrinth app, open this ATM10 instance''s Settings, then "Java and memory" on the left.'
-    Show-Guide 'modrinth-java-and-memory.png'
-    for ($i = 0; $i -lt $steps.Count; $i++) {
-      Write-Host ("`n  {0}" -f $steps[$i][0])
-      Write-Host "     $($steps[$i][1])" -ForegroundColor White
-      if (-not $env:LIONEL_UPDATER_NO_CLIPBOARD) { try { Set-Clipboard -Value $steps[$i][1]; Write-Host '     (Already copied.)' } catch { } }
-      Write-Host '     Press Enter here when done. ' -NoNewline
-      [void][Console]::ReadLine()
-    }
+    $steps = @(, @('Open this ATM10 instance''s Settings in the Modrinth app and click "Java and memory" on the left.', $null))
+    $steps += , @('Memory: switch "Custom memory allocation" on, click the number box at the right end of the slider, select all (Ctrl+A) and paste (Ctrl+V):', "$memMb")
+    if ($javaOk) { $steps += , @('Java: switch "Custom Java installation" on, click in its box, select all (Ctrl+A) and paste (Ctrl+V):', $javaExe) }
+    $steps += , @('Arguments: switch "Custom Java arguments" on, click in its box, select all (Ctrl+A) and paste (Ctrl+V):', $argLine)
+    Write-Host "`nSPEED SETTINGS for the Modrinth app, $($steps.Count) steps." -ForegroundColor Cyan
+    Read-Steps $steps 'modrinth-java-and-memory.png'
     Write-Host "`n  The same steps are in LAUNCH-ARGUMENTS.txt in your ATM10 folder."
   }
   if ($hookCmd) {
-    # In the instance's own Launch hooks, as in the picture: an instance with "Custom game launch hooks" on ignores the
-    # app-wide hook even with its boxes empty (Modrinth's run.rs), so this is the place that always works.
+    # In the instance's own Launch hooks: an instance with "Custom game launch hooks" on ignores the app-wide hook even
+    # with its boxes empty (Modrinth's run.rs), so this is the place that always works.
     if (Test-ModrinthHook) {
       Write-Host "`nThe update check at each start is set up in the Modrinth app." -ForegroundColor Green
     } else {
-      Write-Host "`nUPDATE CHECK AT EACH START: one paste in the Modrinth app." -ForegroundColor Cyan
-      Write-Host '  It asks "update now?" when you press Play and there is a new update.'
-      Write-Host '  1: in this ATM10 instance''s Settings, click "Launch hooks" on the left.'
-      Write-Host '  2: switch "Custom game launch hooks" on.'
-      Write-Host '  3: click in the "Pre-launch" box, select all (Ctrl+A) and paste (Ctrl+V):'
-      Show-Guide 'modrinth-launch-hooks.png'
-      Write-Host "     $hookCmd" -ForegroundColor White
-      if (-not $env:LIONEL_UPDATER_NO_CLIPBOARD) { try { Set-Clipboard -Value $hookCmd; Write-Host '     (Already copied.)' } catch { } }
-      Write-Host '  Press Enter here when done. ' -NoNewline
-      [void][Console]::ReadLine()
+      Write-Host "`nUPDATE CHECK AT EACH START for the Modrinth app, 3 steps: it asks `"update now?`" when you press Play and there is an update." -ForegroundColor Cyan
+      Read-Steps @(
+        @('In this ATM10 instance''s Settings, click "Launch hooks" on the left.', $null),
+        @('Switch "Custom game launch hooks" on.', $null),
+        @('Click in the "Pre-launch" box, select all (Ctrl+A) and paste (Ctrl+V):', $hookCmd)
+      ) 'modrinth-launch-hooks.png'
       if (Test-ModrinthHook) { Write-Host '  Found it: the check is set up.' -ForegroundColor Green }
       else { Write-Host '  Not found in the app yet (it can take a moment to save). If it is pasted, all is well; otherwise the next run asks again.' -ForegroundColor Yellow }
     }

@@ -1,0 +1,25 @@
+# Pack files the updater removes from players' ATM10 folders (moved to lionels-updater-backup, not erased).
+# One path per line, relative to the ATM10 folder.
+kubejs/startup_scripts/update_checker.js
+kubejs/server_scripts/announcements/announcements.js
+# WebDisplays was replaced by WaterFrames. A line ending in / removes a whole folder.
+mods/WebDisplays-REMASTER-2.1.0.jar
+mods/mcef-neoforge-2.1.6-1.21.1.jar
+config/webdisplays_client.toml
+config/webdisplays_common.toml
+wd_next.txt
+mods/mcef-cache/
+mods/mcef-libraries/
+config/mcef/
+wd_filehost/
+# Older copies of jars the update ships newer (README 2x).
+mods/entity_model_features-3.3.5-1.21-neoforge.jar
+mods/entity_texture_features-7.2.1-1.21-neoforge.jar
+# Roxy only exists to load Voxy, which the pack ships switched off; it scanned every jar at start (18 s).
+mods/roxy-*.jar
+# Folded into boss_balance.js.
+kubejs/server_scripts/lionel/aether_no_flight.js
+# Lionel's pack has these off or newer (2026-10-16, "the client after the installation still had voxy"):
+# Voxy is switched off in his pack (and Roxy, which loaded it, is gone); CC: Tweaked ships as 1.120.2.
+mods/voxy-*.jar
+# Older CC: Tweaked jars of any version go by mod id (update.ps1 3b), so they need no line here.

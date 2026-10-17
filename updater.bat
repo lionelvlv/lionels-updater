@@ -18,7 +18,10 @@ rem The download (about 800 MB) and its unpacked copy, with room to spare. A dra
 set "NEED_MB=2000"
 set "ZIP_URL=https://drive.usercontent.google.com/download?id=%DRIVE_ID%&export=download&confirm=t"
 set "VERSION_URL=https://drive.usercontent.google.com/download?id=%VERSION_ID%&export=download&confirm=t"
+rem update.ps1 and its companions for a fresh install (publish.ps1 pushes them there)
+set "LOGIC_URL=https://raw.githubusercontent.com/lionelvlv/lionels-updater/main"
 rem Used by test.ps1 only.
+if defined LIONEL_UPDATER_LOGIC_URL set "LOGIC_URL=%LIONEL_UPDATER_LOGIC_URL%"
 if defined LIONEL_UPDATER_ZIP_URL set "ZIP_URL=%LIONEL_UPDATER_ZIP_URL%"
 if defined LIONEL_UPDATER_VERSION_URL set "VERSION_URL=%LIONEL_UPDATER_VERSION_URL%"
 
@@ -49,6 +52,30 @@ if exist "%LATEST%" del /q "%LATEST%"
 set "ZIP=%~1"
 if not "%ZIP%"=="" set "NEED_MB=1000"
 if not "%ZIP%"=="" goto :space
+
+rem Update or fresh install, asked before anything big is downloaded (2026-10-16): a fresh install needs only the
+rem whole pack, and the update only if the pack is older than it (update.ps1 decides). LIONEL_UPDATER_MODE answers it.
+if /i "%LIONEL_UPDATER_MODE%"=="fresh" goto :fresh
+if /i "%LIONEL_UPDATER_MODE%"=="update" goto :update
+echo.
+echo What would you like to do?
+echo   1) Update the ATM10 you already have
+echo   2) Install the whole pack fresh, as a new instance (about 2.6 GB to download)
+set "PICKMODE="
+set /p "PICKMODE=Type 1 or 2 and press Enter (Enter alone: 1), or Q to stop: "
+if /i "%PICKMODE%"=="Q" goto :done
+if "%PICKMODE%"=="2" goto :fresh
+set "LIONEL_UPDATER_MODE=update"
+goto :update
+
+:fresh
+set "LIONEL_UPDATER_MODE=fresh"
+set "FRESH=1"
+rem the whole pack, and the update and its unpacked copy if the pack turns out older
+set "NEED_MB=4500"
+goto :space
+
+:update
 if "%DRIVE_ID%"=="PUT_DRIVE_FILE_ID_HERE" if not defined LIONEL_UPDATER_ZIP_URL (
   echo This updater has not been given its download link yet.
   echo Ask Lionel for the update zip and drag it onto this file.
@@ -112,6 +139,7 @@ if /i not "%BASE%"=="%TEMP%" echo Temporary files go to %WORK%
 if exist "%WORK%" rmdir /s /q "%WORK%"
 mkdir "%WORK%\files" || goto :done
 if not "%ZIP%"=="" goto :unpack
+if defined FRESH goto :logic
 
 :download
 echo Downloading the latest update...
@@ -124,7 +152,22 @@ set "ZIP=%WORK%\update.zip"
 "%SystemRoot%\System32\tar.exe" -xf "%ZIP%" -C "%WORK%\files" 2>nul
 if errorlevel 1 goto :baddownload
 if not exist "%WORK%\files\update.ps1" goto :baddownload
+goto :run
 
+rem A fresh install: only the updater's own small files, from the GitHub copy publish.ps1 keeps current. The update
+rem itself is fetched by update.ps1 if the whole pack turns out older than it.
+:logic
+echo Getting the updater...
+for %%F in (update.ps1 look.ps1 delete.txt java/resolver-patch.jar) do (
+  "%SystemRoot%\System32\curl.exe" -L --fail -s --create-dirs -o "%WORK%\files\%%F" "%LOGIC_URL%/%%F"
+  if errorlevel 1 goto :baddownload
+)
+findstr /b /c:"# Lionel's Additions updater: the logic." "%WORK%\files\update.ps1" >nul 2>&1
+if errorlevel 1 goto :baddownload
+set "LIONEL_UPDATER_LATER_ZIP=%ZIP_URL%"
+set "LIONEL_UPDATER_LATER_VERSION=%VERSION_URL%"
+
+:run
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%WORK%\files\update.ps1"
 set "RC=%ERRORLEVEL%"
 goto :done

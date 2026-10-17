@@ -44,6 +44,11 @@ rem One line on purpose: cmd has read all of it before the copy changes this fil
 copy /y "%SELF%" "%~f0" >nul & del /q "%SELF%" & "%~f0" %* & exit /b
 :selfdone
 if exist "%SELF%" del /q "%SELF%"
+rem update.ps1 keeps a copy of this file beside its Java, for the launcher's pre-launch check (lionel-check.jar).
+set "LIONEL_UPDATER_STUB=%~f0"
+rem Started by that check (2026-10-16): that instance only, update only, and the update it has is its own record.
+if defined LIONEL_UPDATER_HOOK set "LIONEL_UPDATER_MODE=update"
+if defined LIONEL_UPDATER_HOOK set "HAVE=%LIONEL_UPDATER_HOOK%\lionels-updater-version.txt"
 
 rem Leftovers from a run that was interrupted.
 if exist "%TEMP%\lionels-updater" rmdir /s /q "%TEMP%\lionels-updater"
@@ -89,10 +94,20 @@ if not exist "%HAVE%" goto :space
 if errorlevel 1 goto :space
 fc /b "%LATEST%" "%HAVE%" >nul 2>&1
 if errorlevel 1 goto :space
+if defined LIONEL_UPDATER_HOOK goto :hooklatest
 echo You already have the latest update.
 set "AGAIN="
 set /p "AGAIN=Press Enter to close, or type R and press Enter to install it again: "
 if /i "%AGAIN%"=="R" goto :space
+set "RC=0"
+set "QUIET=1"
+goto :done
+
+rem The check saw the new update on GitHub before Google Drive has finished uploading it: nothing to get yet.
+:hooklatest
+echo The new update is still on its way to the download folder. Try again in a few minutes.
+echo The game starts now.
+"%SystemRoot%\System32\timeout.exe" /t 5 >nul 2>&1
 set "RC=0"
 set "QUIET=1"
 goto :done
@@ -158,7 +173,7 @@ rem A fresh install: only the updater's own small files, from the GitHub copy pu
 rem itself is fetched by update.ps1 if the whole pack turns out older than it.
 :logic
 echo Getting the updater...
-for %%F in (update.ps1 look.ps1 delete.txt java/resolver-patch.jar) do (
+for %%F in (update.ps1 look.ps1 delete.txt java/resolver-patch.jar java/lionel-check.jar) do (
   "%SystemRoot%\System32\curl.exe" -L --fail -s --create-dirs -o "%WORK%\files\%%F" "%LOGIC_URL%/%%F"
   if errorlevel 1 goto :baddownload
 )
@@ -188,5 +203,8 @@ if not exist "%WORK%" if not defined QUIET echo Temporary files removed.
 
 :end
 echo.
+rem From the launch check, a finished update goes straight on to the game; a failed one waits to be read.
+if defined LIONEL_UPDATER_HOOK if "%RC%"=="0" set "QUIET=1"
+if defined LIONEL_UPDATER_HOOK if "%RC%"=="0" "%SystemRoot%\System32\timeout.exe" /t 5 2>nul
 if not defined QUIET pause
 exit /b %RC%

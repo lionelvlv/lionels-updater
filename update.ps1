@@ -9,6 +9,10 @@
 param([string]$Target = $env:LIONEL_UPDATER_TARGET)
 $ErrorActionPreference = 'Stop'
 $src = $PSScriptRoot
+# Started from the launcher's pre-launch check (lionel-check.jar, step 12b): that instance, update only, and no
+# questions, since the game waits to start. The .bat passes LIONEL_UPDATER_HOOK on.
+$fromGame = $env:LIONEL_UPDATER_HOOK
+if ($fromGame) { $Target = $fromGame }
 
 # The look (banner, section marks, progress bars, the toast at the end): look.ps1, beside this file in the zip.
 . (Join-Path $src 'look.ps1')
@@ -258,7 +262,7 @@ function Show-SignIn([string]$exe) {
   if ((Clean-Path ([Console]::ReadLine())) -ieq 'Q') { Fail 'Stopped. Nothing was changed.' }
 }
 
-$launcherExe = Find-LauncherExe
+$launcherExe = if ($fromGame) { 'running' } else { Find-LauncherExe }   # the launcher started the check
 $justInstalled = $false
 while (-not $launcherExe) {
   Write-Host "`n$Launcher does not seem to be installed on this PC."
@@ -700,6 +704,13 @@ Edit-Once 'config\tacz-client.toml' @(
 Edit-Once 'config\notenoughanimations.json' @(
   , @('("tweakElytraAnimation"\s*:\s*)true', 'false')
 ) 'Not Enough Animations'' Elytra arm pose is off: it doubled the arms on a gun while gliding (one line)'
+# 11e. More Overlays' item search (double-click the JEI search bar) built every inventory item's whole tooltip, every
+#      mod's tooltip code included, on every tick: 31% of Lionel's frame time in a Spark profile (2026-10-17, Lionel:
+#      "max the performance"). Names only from now on; the mod's own config says false "will increase performance".
+Edit-Once 'config\moreoverlays.toml' @(
+  @('(?m)^([ \t]*search_tooltip = )true(?=\r?$)', 'false'),
+  @('(?m)^([ \t]*custom_search = )true(?=\r?$)', 'false')
+) 'More Overlays'' item search matches item names only, not whole tooltips (two lines; it cost a third of the frame time)'
 # 11c. lionel-turbo reads a missing switch as off, and config\lionel-turbo.properties is if-missing, so a player who
 #      already has the file would never get a switch added later (2026-10-09: megaCellsCompressionIndex,
 #      punchyMappedBonesOnly). Each switch of the shipped file that the player's file does not mention at all is
@@ -779,9 +790,12 @@ if (Test-Path -LiteralPath $memSeen) {
   if ($last -in '8', '12', '16') { $memGb = [int]$last; $memWhy = 'your last choice' }
 }
 Write-Host "`nMemory for Minecraft: $memGb GB ($memWhy; this PC has $ramGb GB of RAM)."
-Write-Host '  Press Enter to keep it, or type 8, 12 or 16 and press Enter: ' -NoNewline
-$pick = if ($env:LIONEL_UPDATER_MEMORY) { $env:LIONEL_UPDATER_MEMORY } else { [Console]::ReadLine() }
-Write-Host ''
+if ($fromGame -and -not $env:LIONEL_UPDATER_MEMORY) { $pick = '' }   # kept: the game is waiting
+else {
+  Write-Host '  Press Enter to keep it, or type 8, 12 or 16 and press Enter: ' -NoNewline
+  $pick = if ($env:LIONEL_UPDATER_MEMORY) { $env:LIONEL_UPDATER_MEMORY } else { [Console]::ReadLine() }
+  Write-Host ''
+}
 if ($pick) { $pick = $pick.Trim().ToUpper().TrimEnd('B').TrimEnd('G').Trim() }
 if ($pick -in '8', '12', '16') { $memGb = [int]$pick }
 elseif ($pick) { Write-Host "  '$pick' is not 8, 12 or 16: keeping $memGb GB." -ForegroundColor Yellow }
@@ -801,6 +815,37 @@ $argLine = "-Xmx${memGb}G $argRest"
 $javaExe = Join-Path $javaHome 'bin\javaw.exe'
 $javaNote = if ($javaOk) { "Java: $javaExe (Java 21.0.12.1, which the patch needs)." }
   else { 'Java: the launcher''s own (Java 21.0.12.1 could not be downloaded, so the resolver patch is left out: about a minute slower).' }
+
+# 12b. The update check at each start (2026-10-16, Lionel: "prompts the user for an update y/n and if yes it updates
+#     then launches the game"): lionel-check.jar (..\lionel-check), which the launcher runs before the game, with no
+#     mod loaded. It runs on this Java and needs the jar and a copy of the .bat beside it, and two files in the instance:
+#     lionels-updater-check.properties (here) and lionels-updater-version.txt (step 13). The launchers split the command
+#     differently: ATLauncher at every space, quotes kept as they are (the folder has no spaces); the Modrinth app like a
+#     Unix shell, where a backslash outside quotes is an escape, so there its paths go in single quotes.
+$checkFrom = Join-Path $src 'java\lionel-check.jar'
+$checkJar = Join-Path $toolDir 'lionel-check.jar'
+$stubCopy = Join-Path $toolDir 'updater.bat'
+$hookCmd = ''
+if ($javaOk -and (Test-Path -LiteralPath $checkFrom) -and $toolDir -notmatch '\s') {
+  if (-not (Test-Path -LiteralPath $checkJar) -or -not (Same-File $checkFrom $checkJar)) { Copy-To $checkFrom $checkJar }
+  $stubFrom = $env:LIONEL_UPDATER_STUB
+  if ($stubFrom -and (Test-Path -LiteralPath $stubFrom) -and $stubFrom -ne $stubCopy) { Copy-To $stubFrom $stubCopy }
+  if (Test-Path -LiteralPath $stubCopy) {
+    $hookCmd = if ($Launcher -eq 'ATLauncher') { "$javaExe -jar $checkJar" } else { "'$javaExe' -jar '$checkJar'" }
+    $checkUrl = if ($env:LIONEL_UPDATER_CHECK_URL) { $env:LIONEL_UPDATER_CHECK_URL } else { 'https://raw.githubusercontent.com/lionelvlv/lionels-updater/main/version.txt' }
+    $props = "# Read by lionel-check.jar (the launcher's check before each start) and the title-screen notice. Written by the updater.`r`n" +
+      "versionUrl=$checkUrl`r`nstub=$stubCopy`r`nlauncher=$Launcher`r`n"
+    [IO.File]::WriteAllText((Join-Path $Target 'lionels-updater-check.properties'), $props, (New-Object System.Text.UTF8Encoding($false)))
+  }
+}
+$hookText = if ($hookCmd) { @"
+
+UPDATE CHECK AT EACH START: before the game starts, the launcher runs a small check (lionel-check.jar, half a second).
+When there is a new update it asks; Update now runs this updater, then the game starts. Offline it just starts.
+  ATLauncher: written by the updater (Settings > Commands of this instance: Pre-launch command).
+  Modrinth app: this instance > three dots > Settings > Launch hooks: turn on "Custom launch hooks", Pre launch:
+$hookCmd
+"@ } else { '' }
 $argText = @"
 Lionel's Additions: speed setup (fastest start, the same as Lionel's). Written by the updater; run it again to redo it.
 
@@ -822,6 +867,7 @@ Memory preset: $memGb GB ($memMb MB) of this PC's $ramGb GB; the updater asks ev
 $javaNote
 -XX:-BytecodeVerificationRemote skips Java's re-check of mod code as it loads (25 to 40 s); a broken mod then crashes
 less politely. To go back: turn the custom settings off; the launcher uses its own defaults again.
+$hookText
 "@
 $argFile = Join-Path $Target 'LAUNCH-ARGUMENTS.txt'
 [IO.File]::WriteAllText($argFile, $argText.Replace("`r`n", "`n").Replace("`n", "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
@@ -829,6 +875,10 @@ $argFile = Join-Path $Target 'LAUNCH-ARGUMENTS.txt'
 $argSeen = Join-Path $stateDir 'launch-args.txt'
 $argKey = "$Target | $(if ($javaOk) { $javaExe }) | $memMb | $argLine"
 $lastKey = if (Test-Path -LiteralPath $argSeen) { (Get-Content -LiteralPath $argSeen -TotalCount 1) } else { '' }
+# The same for the Modrinth app's pre-launch hook, apart: a player who has the speed setup gets that one step alone.
+$hookSeen = Join-Path $stateDir 'launch-hook.txt'
+$hookKey = "$Target | $hookCmd"
+$lastHook = if (Test-Path -LiteralPath $hookSeen) { (Get-Content -LiteralPath $hookSeen -TotalCount 1) } else { '' }
 
 function Json-Text([string]$s) { '"' + $s.Replace('\', '\\').Replace('"', '\"') + '"' }
 # One key of instance.json's "launcher" section, replaced where it is or added at the section's start. A regex, not
@@ -850,6 +900,9 @@ if ($Launcher -eq 'ATLauncher') {
   $atlJson = Join-Path $Target 'instance.json'
   if (-not (Test-Path -LiteralPath $atlJson)) {
     Write-Host "`nThis folder has no instance.json, so it is not an ATLauncher instance: set up the speed settings by hand (LAUNCH-ARGUMENTS.txt in it)." -ForegroundColor Yellow
+  } elseif ($fromGame) {
+    # ATLauncher is open (it is starting the game) and would write its own copy back: next time by hand, if needed.
+    if ($lastKey -ne $argKey) { Write-Host "`nThe speed settings changed: run the updater yourself once, with ATLauncher closed, to set them." -ForegroundColor Yellow }
   } else {
     for ($try = 0; (Test-ATLauncherOpen) -and $try -lt 3; $try++) {
       Write-Host "`nATLauncher is open. Close it completely (its window, and its icon by the clock if there is one), then press Enter here." -ForegroundColor Yellow
@@ -864,6 +917,16 @@ if ($Launcher -eq 'ATLauncher') {
       $new = Set-JsonKey $json 'javaArguments' (Json-Text $argRest)
       $new = Set-JsonKey $new 'maximumMemory' "$memMb"
       if ($javaOk) { $new = Set-JsonKey $new 'javaPath' (Json-Text $javaHome); $new = Set-JsonKey $new 'useJavaProvidedByMinecraft' 'false' }
+      if ($hookCmd) {
+        # A pre-launch command of the player's own stays (there is one per instance).
+        $prev = [regex]::Match($new, '"preLaunchCommand"\s*:\s*"((?:[^"\\]|\\.)*)"')
+        if (-not $prev.Success -or -not $prev.Groups[1].Value -or $prev.Groups[1].Value -match 'lionel-check') {
+          $new = Set-JsonKey $new 'enableCommands' 'true'
+          $new = Set-JsonKey $new 'preLaunchCommand' (Json-Text $hookCmd)
+        } else {
+          Write-Host "`nThis instance already has a pre-launch command of its own, so the update check at each start was not added." -ForegroundColor Yellow
+        }
+      }
       if ($new -cne $json) {
         if (-not (Test-Path -LiteralPath "$atlJson.bak-lionel")) { Copy-Item -LiteralPath $atlJson "$atlJson.bak-lionel" }
         [IO.File]::WriteAllText($atlJson, $new, (New-Object System.Text.UTF8Encoding($false)))
@@ -873,14 +936,21 @@ if ($Launcher -eq 'ATLauncher') {
       $setupDone = $true
     }
   }
-} elseif ($lastKey -ne $argKey) {
+} elseif ($fromGame) {
+  if ($lastKey -ne $argKey) { Write-Host "`nThe speed settings changed: run the updater yourself once to set them (LAUNCH-ARGUMENTS.txt has them)." -ForegroundColor Yellow }
+} elseif ($lastKey -ne $argKey -or ($hookCmd -and $lastHook -ne $hookKey)) {
   # The Modrinth app: one paste at a time, each value already copied.
-  Write-Host "`nNEW LAUNCH ARGUMENTS: the speed setup for the Modrinth app, three steps." -ForegroundColor Cyan
-  Write-Host '  In the Modrinth app, open this ATM10 instance, click the three dots beside Play, then Settings, then "Java and memory".'
   $steps = @()
-  if ($javaOk) { $steps += , @('Turn on "Custom Java installation", click in its box, select all (Ctrl+A) and paste (Ctrl+V):', $javaExe) }
-  $steps += , @('Turn on "Custom Java arguments", click in its box, select all (Ctrl+A) and paste (Ctrl+V):', $argLine)
-  $steps += , @("Turn on `"Custom memory allocation`" and set it to $memMb MB (type it in the box next to the slider):", "$memMb")
+  if ($lastKey -ne $argKey) {
+    if ($javaOk) { $steps += , @('In "Java and memory": turn on "Custom Java installation", click in its box, select all (Ctrl+A) and paste (Ctrl+V):', $javaExe) }
+    $steps += , @('Turn on "Custom Java arguments", click in its box, select all (Ctrl+A) and paste (Ctrl+V):', $argLine)
+    $steps += , @("Turn on `"Custom memory allocation`" and set it to $memMb MB (type it in the box next to the slider):", "$memMb")
+  }
+  if ($hookCmd -and $lastHook -ne $hookKey) {
+    $steps += , @('The update check at each start: open "Launch hooks", turn on "Custom launch hooks", click in the "Pre launch" box, select all (Ctrl+A) and paste (Ctrl+V):', $hookCmd)
+  }
+  Write-Host "`nNEW LAUNCH SETTINGS for the Modrinth app, $($steps.Count) step$(if ($steps.Count -ne 1) { 's' })." -ForegroundColor Cyan
+  Write-Host '  In the Modrinth app, open this ATM10 instance, click the three dots beside Play, then Settings.'
   for ($i = 0; $i -lt $steps.Count; $i++) {
     Write-Host ("`n  {0}. {1}" -f ($i + 1), $steps[$i][0])
     Write-Host "     $($steps[$i][1])" -ForegroundColor White
@@ -889,15 +959,21 @@ if ($Launcher -eq 'ATLauncher') {
     [void][Console]::ReadLine()
   }
   Write-Host "`n  The same steps are in LAUNCH-ARGUMENTS.txt in your ATM10 folder."
+  if ($hookCmd) { Set-Content -LiteralPath $hookSeen -Value $hookKey -Encoding UTF8 }
   $setupDone = $true
 } else { $setupDone = $true }
 if ($setupDone) { Set-Content -LiteralPath $argSeen -Value $argKey -Encoding UTF8 }
 
-# The stub compares this with the small version file online and skips the big download when they match.
-if (Test-Path -LiteralPath "$src\version.txt") { Copy-Item -LiteralPath "$src\version.txt" -Destination (Join-Path $stateDir 'version.txt') -Force }
+# 13. The stub compares this with the small version file online and skips the big download when they match; the
+#     instance's own copy is what the check at each start compares (and the stub, when the check started it).
+if (Test-Path -LiteralPath "$src\version.txt") {
+  Copy-Item -LiteralPath "$src\version.txt" -Destination (Join-Path $stateDir 'version.txt') -Force
+  Copy-Item -LiteralPath "$src\version.txt" -Destination (Join-Path $Target 'lionels-updater-version.txt') -Force
+}
 
 Write-Host "`nDone. Added $added, updated $updated, removed $removed, already up to date $unchanged." -ForegroundColor Green
 Show-Toast 'Advancement Made!' $(if ($Mode -eq 'fresh') { "Lionel's ATM10, installed ($label)" } else { "Up to date: update $label" })
+if ($fromGame) { Write-Host "`nThe game starts now." -ForegroundColor Cyan; exit 0 }
 $instanceName = Split-Path -Leaf $(if ((Split-Path -Leaf $Target) -match '^\.?minecraft$') { Split-Path -Parent $Target } else { $Target })
 Write-Host "`nWhat to do now:" -ForegroundColor Cyan
 if ($Launcher -eq 'ATLauncher') {
@@ -909,4 +985,5 @@ if ($Launcher -eq 'ATLauncher') {
 }
 if ($Mode -eq 'fresh') { Write-Host '     The first start of a new instance takes longer than later ones (5 minutes or more is normal).' }
 Write-Host "  2. On the title screen, click `"Join Lionel's Server`" (or turn on Auto-join next to it to join on every start)."
-Write-Host '  3. Next time there is an update, just run this updater again.'
+if ($hookCmd) { Write-Host '  3. Next time there is an update, the launcher asks when you press Play (or run this updater again).' }
+else { Write-Host '  3. Next time there is an update, just run this updater again.' }

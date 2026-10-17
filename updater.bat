@@ -93,7 +93,7 @@ set /p "PICK=Folder: "
 if not defined PICK goto :done
 set "PICK=%PICK:"=%"
 if /i "%PICK%"=="P" set "PICK="
-if not defined PICK for /f "delims=" %%P in ('powershell.exe -NoProfile -STA -Command "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Choose a folder for the updater''s temporary files (about 2 GB, removed afterwards)'; if ($d.ShowDialog() -eq 'OK') { $d.SelectedPath }"') do set "PICK=%%P"
+if not defined PICK for /f "delims=" %%P in ('powershell.exe -NoProfile -STA -Command "Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Choose a folder for the updater''s temporary files (about 2 GB, removed afterwards)'; $o = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }; if ($d.ShowDialog($o) -eq 'OK') { $d.SelectedPath }"') do set "PICK=%%P"
 if not defined PICK goto :checkspace
 if "%PICK:~-1%"=="\" set "PICK=%PICK:~0,-1%"
 if not exist "%PICK%\" goto :nofolder

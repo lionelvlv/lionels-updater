@@ -456,6 +456,21 @@ $named = @(Get-Files "$src\overwrite") + @(Get-Files "$src\if-missing")
 foreach ($list in "$src\delete.txt", $recordPath) {
   if (Test-Path -LiteralPath $list) { $named += @(Get-Content -LiteralPath $list | Where-Object { $_.Trim() -and $_ -notmatch '^\s*#' }) }
 }
+# The optional mods (step 5c), read here: their paths are checked with the rest, and step 4 leaves their files alone
+# (an earlier update shipped Shoulder Surfing and Punchy, so the installed list names them).
+$optionalMods = @()
+if (Test-Path -LiteralPath "$src\optional.txt") {
+  foreach ($line in @(Get-Content -LiteralPath "$src\optional.txt" | Where-Object { $_.Trim() -and $_ -notmatch '^\s*#' })) {
+    $p = $line.Split('|')
+    if ($p.Count -lt 6) { continue }
+    $files = @()
+    foreach ($f in $p[5].Split(';')) { $q = $f.Split('>'); if ($q.Count -eq 3) { $files += , @($q[0].Trim(), $q[1].Trim(), $q[2].Trim().ToLowerInvariant()) } }
+    $optionalMods += , [pscustomobject]@{ Id = $p[0].Trim(); Name = $p[1].Trim(); About = $p[2].Trim(); Default = ($p[3].Trim() -eq 'on')
+      ModIds = @($p[4].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }); Files = $files }
+  }
+}
+$optionalPaths = @{}
+foreach ($m in $optionalMods) { foreach ($f in $m.Files) { $optionalPaths[$f[0]] = $true; $named += $f[0] } }
 try { foreach ($rel in $named) { Resolve-Safe $rel | Out-Null } } catch { Fail "$($_.Exception.Message)`nThis update is faulty. Nothing was changed. Tell Lionel." }
 
 # Room on the ATM10 drive for what this update copies (a size that differs means a copy; 200 MB to spare).
@@ -495,7 +510,7 @@ Clear-LookLine
 #    Only with the update's files at hand: without them every listed file would look gone from the update.
 if ($haveFiles) {
   if (Test-Path -LiteralPath $recordPath) {
-    foreach ($rel in @(Get-Content -LiteralPath $recordPath | Where-Object { $_.Trim() -and $installed -notcontains $_.Trim() })) {
+    foreach ($rel in @(Get-Content -LiteralPath $recordPath | Where-Object { $_.Trim() -and $installed -notcontains $_.Trim() -and -not $optionalPaths[$_.Trim()] })) {
       $old = Resolve-Safe $rel
       if (Test-Path -LiteralPath $old -PathType Leaf) { Remove-Item -LiteralPath $old -Force; $removed++; Write-Change '-' $rel }
     }
@@ -508,7 +523,15 @@ if ($haveFiles) {
 #     today. Any jar in mods\ that this update did not install but that declares a mod id one of its jars declares
 #     is moved to the backup folder, whatever its file name.
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+# Kept per jar for the run: step 5c reads the same jars again.
+$modIdCache = @{}
 function Get-ModIds([string]$jar) {
+  if ($modIdCache.ContainsKey($jar)) { return $modIdCache[$jar] }
+  $ids = Read-ModIds $jar
+  $modIdCache[$jar] = $ids
+  $ids
+}
+function Read-ModIds([string]$jar) {
   $ids = @()
   try {
     $z = [IO.Compression.ZipFile]::OpenRead($jar)
@@ -583,6 +606,105 @@ if (Test-Path -LiteralPath "$src\delete.txt") {
       $removed++; Write-Change '-' "$($rel.Trim())  (kept in lionels-updater-backup)"
     }
   }
+}
+
+# 5c. Optional mods (2026-10-17, Lionel: Shoulder Surfing and Punchy, "if it's already present, disable the mods
+#     respectively"; "add distant horizons to the optional installs in the updater (updating or fresh install)").
+#     optional.txt names them. Asked on every run but the launch check's (Enter keeps); the choice is kept per instance
+#     in lionels-updater-optional.txt. First run: on if the player already has it (an enabled jar declaring its mod
+#     id), otherwise its default. On: its files are downloaded (SHA-1 checked) or a .disabled copy renamed back, then
+#     any other jar with its mod id goes to the backup folder (two of one mod stop the game). Off: every jar declaring
+#     its mod id is renamed .jar.disabled, the player's own copies too. Nothing is deleted.
+if ($optionalMods.Count) {
+  Write-Section 'Optional mods'
+  $choicePath = Join-Path $Target 'lionels-updater-optional.txt'
+  $saved = @{}
+  if (Test-Path -LiteralPath $choicePath) {
+    foreach ($l in Get-Content -LiteralPath $choicePath) { if ($l -match '^\s*([\w.-]+)\s*=\s*(on|off)\s*$') { $saved[$Matches[1]] = ($Matches[2] -eq 'on') } }
+  }
+  $byId = @{}
+  $jars = @(Get-ChildItem -LiteralPath (Join-Path $Target 'mods') -Filter *.jar -File)
+  $i = 0
+  foreach ($j in $jars) {
+    Show-LookBar 'Looking for optional mods' ($i++ / [Math]::Max(1, $jars.Count)) "$i of $($jars.Count)"
+    foreach ($id in (Get-ModIds $j.FullName)) { if (-not $byId.ContainsKey($id)) { $byId[$id] = @() }; $byId[$id] += $j.FullName }
+  }
+  Clear-LookLine
+  $on = @{}
+  foreach ($m in $optionalMods) {
+    $has = [bool]@($m.ModIds | Where-Object { $byId.ContainsKey($_) }).Count
+    $on[$m.Id] = if ($saved.ContainsKey($m.Id)) { $saved[$m.Id] } elseif ($has) { $true } else { $m.Default }
+  }
+  if (-not $fromGame) {
+    while ($true) {
+      Write-Host "`nOptional mods (only on this PC; the server does not need them):"
+      for ($k = 0; $k -lt $optionalMods.Count; $k++) {
+        $m = $optionalMods[$k]
+        Write-Host ('  {0}) [{1}] {2}: {3}' -f ($k + 1), $(if ($on[$m.Id]) { 'x' } else { ' ' }), $m.Name, $m.About)
+      }
+      Write-Host 'Type numbers to switch them on or off (e.g. 1 3) and press Enter; press Enter alone to keep these: ' -NoNewline
+      $answer = if ($env:LIONEL_UPDATER_OPTIONAL) { $env:LIONEL_UPDATER_OPTIONAL } else { [Console]::ReadLine() }
+      Write-Host ''
+      $answer = if ($answer) { $answer.Trim() } else { '' }
+      if (-not $answer -or $answer -eq 'keep') { break }
+      foreach ($n in ($answer -split '[\s,]+')) {
+        if ($n -match '^\d+$' -and [int]$n -ge 1 -and [int]$n -le $optionalMods.Count) { $m = $optionalMods[[int]$n - 1]; $on[$m.Id] = -not $on[$m.Id] }
+        else { Write-Host "  '$n' is not one of the numbers above." -ForegroundColor Yellow }
+      }
+      if ($env:LIONEL_UPDATER_OPTIONAL) { break }   # test.ps1 answers once
+    }
+  }
+  $sha = { param($p) (Get-FileHash -LiteralPath $p -Algorithm SHA1).Hash.ToLowerInvariant() }
+  $backupMods = Join-Path (Join-Path $Target 'lionels-updater-backup') 'mods'
+  foreach ($m in $optionalMods) {
+    if ($on[$m.Id]) {
+      $mine = @{}
+      $complete = $true
+      foreach ($f in $m.Files) {
+        $dest = Resolve-Safe $f[0]
+        $mine[$dest.ToLowerInvariant()] = $true
+        if ((Test-Path -LiteralPath $dest) -and (& $sha $dest) -eq $f[2]) { continue }
+        if ((Test-Path -LiteralPath "$dest.disabled") -and (& $sha "$dest.disabled") -eq $f[2]) {
+          if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Force }
+          Move-Item -LiteralPath "$dest.disabled" -Destination $dest
+          $added++; Write-Change '+' "$($f[0])  (switched back on)"
+          continue
+        }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dest) | Out-Null
+        $part = "$dest.part"
+        $ok = Invoke-Download $f[1] $part $m.Name
+        if ($ok -and (Test-Path -LiteralPath $part) -and (& $sha $part) -eq $f[2]) {
+          if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Force; $updated++ } else { $added++ }
+          Move-Item -LiteralPath $part -Destination $dest
+          Write-Change '+' $f[0]
+        } else {
+          if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }
+          $complete = $false
+          Write-Host "  $($m.Name) could not be downloaded, or was not the expected file: not installed. Run the updater again later." -ForegroundColor Yellow
+        }
+      }
+      if ($complete) {
+        foreach ($id in $m.ModIds) {
+          foreach ($jar in @($byId[$id])) {
+            if (-not $jar -or $mine[$jar.ToLowerInvariant()] -or -not (Test-Path -LiteralPath $jar)) { continue }
+            New-Item -ItemType Directory -Force -Path $backupMods | Out-Null
+            Move-Item -LiteralPath $jar -Destination (Join-Path $backupMods (Split-Path -Leaf $jar)) -Force
+            $removed++; Write-Change '-' "mods/$(Split-Path -Leaf $jar)  (another copy of $($m.Name); kept in lionels-updater-backup)"
+          }
+        }
+      }
+    } else {
+      foreach ($id in $m.ModIds) {
+        foreach ($jar in @($byId[$id])) {
+          if (-not $jar -or -not (Test-Path -LiteralPath $jar)) { continue }
+          if (Test-Path -LiteralPath "$jar.disabled") { Remove-Item -LiteralPath "$jar.disabled" -Force }
+          Move-Item -LiteralPath $jar -Destination "$jar.disabled"
+          $removed++; Write-Change '-' "mods/$(Split-Path -Leaf $jar)  ($($m.Name) switched off: renamed .jar.disabled)"
+        }
+      }
+    }
+  }
+  Set-Content -LiteralPath $choicePath -Value @($optionalMods | ForEach-Object { "$($_.Id)=$(if ($on[$_.Id]) { 'on' } else { 'off' })" }) -Encoding ASCII
 }
 
 # 6. Defaults: only where the player has no file of their own.

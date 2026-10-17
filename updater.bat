@@ -173,7 +173,7 @@ rem A fresh install: only the updater's own small files, from the GitHub copy pu
 rem itself is fetched by update.ps1 if the whole pack turns out older than it.
 :logic
 echo Getting the updater...
-for %%F in (update.ps1 look.ps1 delete.txt java/resolver-patch.jar java/lionel-check.jar) do (
+for %%F in (update.ps1 look.ps1 delete.txt optional.txt java/resolver-patch.jar java/lionel-check.jar) do (
   "%SystemRoot%\System32\curl.exe" -L --fail -s --create-dirs -o "%WORK%\files\%%F" "%LOGIC_URL%/%%F"
   if errorlevel 1 goto :baddownload
 )

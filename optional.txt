@@ -1,0 +1,8 @@
+# Optional mods (update.ps1 step 5c): only on players' own PCs, never on the server. One mod per line:
+#   id | name | what it does | default for a player who does not have it (on/off) | its mod ids (comma) | files
+# Files: path in the instance > download address > SHA-1, several separated by ;  The SHA-1 is checked after every
+# download: a file that does not match is not installed. Shipped with the update and on GitHub (publish.ps1), so a
+# fresh install from a current whole pack has it too. A mod switched off is renamed .jar.disabled, never deleted.
+shouldersurfing|Shoulder Surfing|over-the-shoulder third-person camera|on|shouldersurfing|mods/ShoulderSurfing-NeoForge-1.21.1-5.0.11.jar>https://cdn.modrinth.com/data/kepjj2sy/versions/gtUuy6S9/ShoulderSurfing-NeoForge-1.21.1-5.0.11.jar>f2ce168efa27d425ae1e6fdff168fb9d87a7cf0f
+punchy|Punchy|first-person swing animations (swords only, Lionel's build)|on|punchy|mods/punchy-2.7e-neoforge-1.21.1.jar>https://raw.githubusercontent.com/lionelvlv/lionels-updater/main/optional/punchy-2.7e-neoforge-1.21.1.jar>956914ef0255eb612ef1d39de839499de52243c3
+distanthorizons|Distant Horizons|terrain far beyond your render distance; heavy on the graphics card, memory and disk (28 MB, more as it saves what you have seen)|off|distanthorizons|mods/DistantHorizons-3.3.3-1.21.1-fabric-neoforge.jar>https://cdn.modrinth.com/data/uCdwusMi/versions/9w34y8ai/DistantHorizons-3.3.3-1.21.1-fabric-neoforge.jar>4357b4d19fab818780c94f0e43dad1cc931634b2

@@ -48,13 +48,7 @@ aside h3 { margin:0 0 14px; font-size:18px; font-weight:600; }
 .btn { flex:1; display:block; background:var(--accent); color:#fff; text-align:center; padding:10px; text-decoration:none; font-size:17px; }
 .btn:hover { background:var(--accent2); }
 details { position:relative; }
-summary { list-style:none; cursor:pointer; background:var(--accent); color:#fff; padding:10px 14px; border-left:1px solid var(--accent2); height:100%; }
-summary::-webkit-details-marker { display:none; }
-details[open] summary, summary:hover { background:var(--accent2); }
-.menu { position:absolute; right:0; top:100%; z-index:2; width:296px; background:#262626; box-shadow:0 8px 24px #000a; }
-.menu a { display:block; padding:12px 14px; text-decoration:none; border-bottom:1px solid var(--line); }
-.menu a:hover { background:#303030; }
-.menu small, .hint { display:block; color:var(--dim); font-size:13px; }
+.hint { display:block; color:var(--dim); font-size:13px; }
 .hint { margin-top:10px; }
 dl { display:grid; grid-template-columns:auto 1fr; gap:10px 20px; margin:0; }
 dt { color:var(--dim); } dd { margin:0; }
@@ -62,7 +56,6 @@ dt { color:var(--dim); } dd { margin:0; }
 @media (max-width:900px) {
   .wrap { grid-template-columns:minmax(0,1fr); gap:24px; }
   aside { order:-1; }
-  .menu { width:100%; }
   nav a { padding:8px 14px; font-size:15px; }
   .mods li { grid-template-columns:minmax(0,1fr); }
   .mods span { grid-column:1; grid-row:auto; }
@@ -83,13 +76,13 @@ dt { color:var(--dim); } dd { margin:0; }
   <nav>
     <a href="#description">Description</a>
     <a href="#files">Files</a>
-    <a href="#gallery">Gallery (6)</a>
+    <a href="#gallery">Gallery (3)</a>
     <a href="#relations">Relations</a>
     <a href="https://github.com/lionelvlv/lionels-updater/issues" target="_blank">Issues &#8599;</a>
   </nav>
 
   <section class="tab" id="description">
-    <img class="hero" src="gallery/2026-10-16_19.30.18.jpg" alt="The Lost City, guns drawn">
+    <img class="hero" src="gallery/2026-10-16_00.02.58.jpg" alt="A Blight wreathed in coloured fire">
     <h2>What's in it</h2>
     <ul class="feat">
       <li><b>The Lost City:</b> Spore's infection kept to one endgame dimension. Guns, power-ups, Pack-a-Punch, Calamity fights and trophies for the ATM Star.</li>
@@ -112,8 +105,6 @@ dt { color:var(--dim); } dd { margin:0; }
     <div class="current">
       <span class="tag">R</span>
       <span>Update <b>2026-10-16 20:43</b></span>
-      <a href="https://drive.usercontent.google.com/download?id=1czcjd-xR4lmtCPN5fUlQ1XYYMoG7Z7Oo&amp;export=download&amp;confirm=t">Update zip (763 MB)</a>
-      <a href="https://drive.usercontent.google.com/download?id=1WRkfq006ANIYAVzx9xawV1-zWi5Rv3H_&amp;export=download&amp;confirm=t">Full pack .mrpack (2.4 GB)</a>
     </div>
     <h2>Changelog</h2>
     <ul class="log">
@@ -202,9 +193,6 @@ dt { color:var(--dim); } dd { margin:0; }
 
   <section class="tab" id="gallery">
     <div class="grid">
-<a href="gallery/2026-10-16_19.30.18.jpg" target="_blank"><img src="gallery/2026-10-16_19.30.18.jpg" alt="Screenshot from the pack" loading="lazy"></a>
-<a href="gallery/2026-10-16_18.52.45.jpg" target="_blank"><img src="gallery/2026-10-16_18.52.45.jpg" alt="Screenshot from the pack" loading="lazy"></a>
-<a href="gallery/2026-10-15_22.22.55.jpg" target="_blank"><img src="gallery/2026-10-15_22.22.55.jpg" alt="Screenshot from the pack" loading="lazy"></a>
 <a href="gallery/2026-10-16_00.02.58.jpg" target="_blank"><img src="gallery/2026-10-16_00.02.58.jpg" alt="Screenshot from the pack" loading="lazy"></a>
 <a href="gallery/2026-10-16_00.03.33.jpg" target="_blank"><img src="gallery/2026-10-16_00.03.33.jpg" alt="Screenshot from the pack" loading="lazy"></a>
 <a href="gallery/2026-10-16_00.04.05.jpg" target="_blank"><img src="gallery/2026-10-16_00.04.05.jpg" alt="Screenshot from the pack" loading="lazy"></a>
@@ -270,13 +258,6 @@ dt { color:var(--dim); } dd { margin:0; }
   <section>
     <div class="install">
       <a class="btn" href="updater.bat" download="Update Lionel's Additions.bat">Download updater</a>
-      <details>
-        <summary aria-label="More downloads">&#9662;</summary>
-        <div class="menu">
-          <a href="https://drive.usercontent.google.com/download?id=1WRkfq006ANIYAVzx9xawV1-zWi5Rv3H_&amp;export=download&amp;confirm=t">Full pack (.mrpack)<small>2.4 GB. Import into Modrinth by hand.</small></a>
-          <a href="https://drive.usercontent.google.com/download?id=1czcjd-xR4lmtCPN5fUlQ1XYYMoG7Z7Oo&amp;export=download&amp;confirm=t">Update zip<small>763 MB. Drag it onto the .bat if its download fails.</small></a>
-        </div>
-      </details>
     </div>
     <span class="hint">Windows may warn that the file is unrecognised: More info, then Run anyway.</span>
   </section>

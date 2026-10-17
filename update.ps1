@@ -978,8 +978,10 @@ $hookText = if ($hookCmd) { @"
 UPDATE CHECK AT EACH START: before the game starts, the launcher runs a small check (lionel-check.jar, half a second).
 When there is a new update it asks; Update now runs this updater, then the game starts. Offline it just starts.
   ATLauncher: written by the updater (Settings > Commands of this instance: Pre-launch command).
-  Modrinth app: this instance > three dots > Settings > Launch hooks: turn on "Custom launch hooks", Pre launch:
+  Modrinth app: this instance's Settings > Launch hooks: switch "Custom game launch hooks" on, and in "Pre-launch":
 $hookCmd
+  (Or once for all instances: the app's Settings > Instance defaults > Launch hooks > Pre-launch hook. But an instance
+  with "Custom game launch hooks" switched on ignores that one, even with its boxes empty.)
 "@ } else { '' }
 $argText = @"
 Lionel's Additions: speed setup (fastest start, the same as Lionel's). Written by the updater; run it again to redo it.
@@ -990,13 +992,12 @@ ATLAUNCHER: the updater writes these into the instance itself (ATLauncher must b
     Java Path: $javaHome
     Java Parameters: $argRest
 
-MODRINTH APP: open this instance, click the three dots beside Play, then Settings > Java and memory:
-  1. Turn on "Custom Java installation" and set: $javaExe
-  2. Turn on "Custom Java arguments" and replace the box's contents with this ONE line:
+MODRINTH APP: open this instance's Settings, then "Java and memory":
+  1. Switch "Custom memory allocation" on and type $memMb in the box right of the slider.
+  2. Switch "Custom Java installation" on and put this in its box: $javaExe
+  3. Switch "Custom Java arguments" on and replace the box's contents with this ONE line:
 
 $argLine
-
-  3. Turn on "Custom memory allocation" and set $memMb MB.
 
 Memory preset: $memGb GB ($memMb MB) of this PC's $ramGb GB; the updater asks every run (8, 12 or 16 GB).
 $javaNote
@@ -1010,10 +1011,39 @@ $argFile = Join-Path $Target 'LAUNCH-ARGUMENTS.txt'
 $argSeen = Join-Path $stateDir 'launch-args.txt'
 $argKey = "$Target | $(if ($javaOk) { $javaExe }) | $memMb | $argLine"
 $lastKey = if (Test-Path -LiteralPath $argSeen) { (Get-Content -LiteralPath $argSeen -TotalCount 1) } else { '' }
-# The same for the Modrinth app's pre-launch hook, apart: a player who has the speed setup gets that one step alone.
-$hookSeen = Join-Path $stateDir 'launch-hook.txt'
-$hookKey = "$Target | $hookCmd"
-$lastHook = if (Test-Path -LiteralPath $hookSeen) { (Get-Content -LiteralPath $hookSeen -TotalCount 1) } else { '' }
+# A picture of the launcher's settings page, numbered like the steps beside it (guide\, shipped in the zip and fetched
+# with the updater for a fresh install; the GitHub copy if it is missing). Opened in the PC's own picture viewer.
+function Show-Guide([string]$name) {
+  if ($env:LIONEL_UPDATER_NO_START) { return }   # test.ps1
+  $local = Join-Path $src "guide\$name"
+  $target = if (Test-Path -LiteralPath $local) { $local } else { "https://raw.githubusercontent.com/lionelvlv/lionels-updater/main/guide/$name" }
+  try { Start-Process $target; Write-Host '  (A picture of that page opened, with the same numbers.)' } catch { }
+}
+
+# The Modrinth app's pre-launch hook (12b) is looked for in its own database, read only, the way Find-Packs reads it:
+# found, nothing to do; not found, one paste in the app's settings (2026-10-17, Lionel: "add the update checker to the
+# updater as well"). Read in 4 MB pieces (app.db can be 90 MB); the hook's text is stored as plain text there.
+function Test-ModrinthHook {
+  if ($env:LIONEL_UPDATER_MR_HOOK) { return $env:LIONEL_UPDATER_MR_HOOK -eq '1' }   # test.ps1
+  $needle = 'lionel-check.jar'
+  $latin = [Text.Encoding]::GetEncoding(28591)
+  foreach ($db in "$env:APPDATA\ModrinthApp\app.db", "$env:APPDATA\ModrinthApp\app.db-wal") {
+    if (-not [IO.File]::Exists($db)) { continue }
+    try {
+      $fs = [IO.File]::Open($db, 'Open', 'Read', 'ReadWrite, Delete')
+      try {
+        $buf = New-Object byte[] 4194304
+        $tail = ''
+        while (($n = $fs.Read($buf, 0, $buf.Length)) -gt 0) {
+          $chunk = $tail + $latin.GetString($buf, 0, $n)
+          if ($chunk.Contains($needle)) { return $true }
+          $tail = $chunk.Substring([Math]::Max(0, $chunk.Length - $needle.Length))
+        }
+      } finally { $fs.Dispose() }
+    } catch { }
+  }
+  $false
+}
 
 function Json-Text([string]$s) { '"' + $s.Replace('\', '\\').Replace('"', '\"') + '"' }
 # One key of instance.json's "launcher" section, replaced where it is or added at the section's start. A regex, not
@@ -1073,30 +1103,48 @@ if ($Launcher -eq 'ATLauncher') {
   }
 } elseif ($fromGame) {
   if ($lastKey -ne $argKey) { Write-Host "`nThe speed settings changed: run the updater yourself once to set them (LAUNCH-ARGUMENTS.txt has them)." -ForegroundColor Yellow }
-} elseif ($lastKey -ne $argKey -or ($hookCmd -and $lastHook -ne $hookKey)) {
-  # The Modrinth app: one paste at a time, each value already copied.
-  $steps = @()
+} else {
+  # The Modrinth app: one paste at a time, each value already copied, beside a picture of that settings page with the
+  # same numbers (guide\, Lionel's screenshots of 2026-10-17; labels also checked in modrinth/code, apps/app-frontend).
   if ($lastKey -ne $argKey) {
-    if ($javaOk) { $steps += , @('In "Java and memory": turn on "Custom Java installation", click in its box, select all (Ctrl+A) and paste (Ctrl+V):', $javaExe) }
-    $steps += , @('Turn on "Custom Java arguments", click in its box, select all (Ctrl+A) and paste (Ctrl+V):', $argLine)
-    $steps += , @("Turn on `"Custom memory allocation`" and set it to $memMb MB (type it in the box next to the slider):", "$memMb")
+    $steps = @()
+    $steps += , @('2, 3: switch "Custom memory allocation" on, click in the box right of the slider, select all (Ctrl+A) and paste (Ctrl+V):', "$memMb")
+    if ($javaOk) { $steps += , @('4, 5: switch "Custom Java installation" on, click in its box, select all (Ctrl+A) and paste (Ctrl+V):', $javaExe) }
+    $steps += , @('6, 7: switch "Custom Java arguments" on, click in its box, select all (Ctrl+A) and paste (Ctrl+V):', $argLine)
+    Write-Host "`nNEW LAUNCH SETTINGS for the Modrinth app, $($steps.Count) steps." -ForegroundColor Cyan
+    Write-Host '  1: in the Modrinth app, open this ATM10 instance''s Settings, then "Java and memory" on the left.'
+    Show-Guide 'modrinth-java-and-memory.png'
+    for ($i = 0; $i -lt $steps.Count; $i++) {
+      Write-Host ("`n  {0}" -f $steps[$i][0])
+      Write-Host "     $($steps[$i][1])" -ForegroundColor White
+      if (-not $env:LIONEL_UPDATER_NO_CLIPBOARD) { try { Set-Clipboard -Value $steps[$i][1]; Write-Host '     (Already copied.)' } catch { } }
+      Write-Host '     Press Enter here when done. ' -NoNewline
+      [void][Console]::ReadLine()
+    }
+    Write-Host "`n  The same steps are in LAUNCH-ARGUMENTS.txt in your ATM10 folder."
   }
-  if ($hookCmd -and $lastHook -ne $hookKey) {
-    $steps += , @('The update check at each start: open "Launch hooks", turn on "Custom launch hooks", click in the "Pre launch" box, select all (Ctrl+A) and paste (Ctrl+V):', $hookCmd)
+  if ($hookCmd) {
+    # In the instance's own Launch hooks, as in the picture: an instance with "Custom game launch hooks" on ignores the
+    # app-wide hook even with its boxes empty (Modrinth's run.rs), so this is the place that always works.
+    if (Test-ModrinthHook) {
+      Write-Host "`nThe update check at each start is set up in the Modrinth app." -ForegroundColor Green
+    } else {
+      Write-Host "`nUPDATE CHECK AT EACH START: one paste in the Modrinth app." -ForegroundColor Cyan
+      Write-Host '  It asks "update now?" when you press Play and there is a new update.'
+      Write-Host '  1: in this ATM10 instance''s Settings, click "Launch hooks" on the left.'
+      Write-Host '  2: switch "Custom game launch hooks" on.'
+      Write-Host '  3: click in the "Pre-launch" box, select all (Ctrl+A) and paste (Ctrl+V):'
+      Show-Guide 'modrinth-launch-hooks.png'
+      Write-Host "     $hookCmd" -ForegroundColor White
+      if (-not $env:LIONEL_UPDATER_NO_CLIPBOARD) { try { Set-Clipboard -Value $hookCmd; Write-Host '     (Already copied.)' } catch { } }
+      Write-Host '  Press Enter here when done. ' -NoNewline
+      [void][Console]::ReadLine()
+      if (Test-ModrinthHook) { Write-Host '  Found it: the check is set up.' -ForegroundColor Green }
+      else { Write-Host '  Not found in the app yet (it can take a moment to save). If it is pasted, all is well; otherwise the next run asks again.' -ForegroundColor Yellow }
+    }
   }
-  Write-Host "`nNEW LAUNCH SETTINGS for the Modrinth app, $($steps.Count) step$(if ($steps.Count -ne 1) { 's' })." -ForegroundColor Cyan
-  Write-Host '  In the Modrinth app, open this ATM10 instance, click the three dots beside Play, then Settings.'
-  for ($i = 0; $i -lt $steps.Count; $i++) {
-    Write-Host ("`n  {0}. {1}" -f ($i + 1), $steps[$i][0])
-    Write-Host "     $($steps[$i][1])" -ForegroundColor White
-    if (-not $env:LIONEL_UPDATER_NO_CLIPBOARD) { try { Set-Clipboard -Value $steps[$i][1]; Write-Host '     (Already copied.)' } catch { } }
-    Write-Host '     Press Enter here when done. ' -NoNewline
-    [void][Console]::ReadLine()
-  }
-  Write-Host "`n  The same steps are in LAUNCH-ARGUMENTS.txt in your ATM10 folder."
-  if ($hookCmd) { Set-Content -LiteralPath $hookSeen -Value $hookKey -Encoding UTF8 }
   $setupDone = $true
-} else { $setupDone = $true }
+}
 if ($setupDone) { Set-Content -LiteralPath $argSeen -Value $argKey -Encoding UTF8 }
 
 # 13. The stub compares this with the small version file online and skips the big download when they match; the

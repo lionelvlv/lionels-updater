@@ -630,10 +630,17 @@ if ($optionalMods.Count) {
     foreach ($id in (Get-ModIds $j.FullName)) { if (-not $byId.ContainsKey($id)) { $byId[$id] = @() }; $byId[$id] += $j.FullName }
   }
   Clear-LookLine
+  # A player who disabled one themselves before this menu existed (renamed .jar.disabled, or switched off in the
+  # Modrinth app): their first run reads that as "off", instead of switching it back on by default.
+  $offById = @{}
+  foreach ($j in @(Get-ChildItem -LiteralPath (Join-Path $Target 'mods') -Filter *.jar.disabled -File)) {
+    foreach ($id in (Get-ModIds $j.FullName)) { $offById[$id] = $true }
+  }
   $on = @{}
   foreach ($m in $optionalMods) {
     $has = [bool]@($m.ModIds | Where-Object { $byId.ContainsKey($_) }).Count
-    $on[$m.Id] = if ($saved.ContainsKey($m.Id)) { $saved[$m.Id] } elseif ($has) { $true } else { $m.Default }
+    $hadOff = [bool]@($m.ModIds | Where-Object { $offById.ContainsKey($_) }).Count
+    $on[$m.Id] = if ($saved.ContainsKey($m.Id)) { $saved[$m.Id] } elseif ($has) { $true } elseif ($hadOff) { $false } else { $m.Default }
   }
   if (-not $fromGame) {
     while ($true) {

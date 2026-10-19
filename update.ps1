@@ -846,6 +846,12 @@ Edit-Once 'config\moreoverlays.toml' @(
 Edit-Once 'config\chloride-client.toml' @(
   , @('(?m)^(\[fastBlocks\]\r?\n(?:[ \t]*#[^\n]*\n)*[ \t]*chests = )false(?=\r?$)', 'true')
 ) 'Chloride''s Fast Chests are on: chests draw as plain models, much cheaper in chest rooms; lids no longer animate (one line)'
+# 11g. ImmediatelyFast's font atlas resizing (2026-10-18): a player's text all came out as black boxes (tooltips, item
+#      counts, titles; shaders off made no difference) while a few glyphs drew fine, so glyph pages of the resized font
+#      atlas were broken on his graphics driver. Off: the game keeps its own font pages (a few more draw calls for text).
+Edit-Once 'config\immediatelyfast.json' @(
+  , @('(?m)^([ \t]*"font_atlas_resizing": )true(?=,?\r?$)', 'false')
+) 'ImmediatelyFast''s font atlas resizing is off: on some graphics drivers it turned all text into black boxes (one line)'
 # 11c. lionel-turbo reads a missing switch as off, and config\lionel-turbo.properties is if-missing, so a player who
 #      already has the file would never get a switch added later (2026-10-09: megaCellsCompressionIndex,
 #      punchyMappedBonesOnly). Each switch of the shipped file that the player's file does not mention at all is

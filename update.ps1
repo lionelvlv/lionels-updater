@@ -852,6 +852,12 @@ Edit-Once 'config\chloride-client.toml' @(
 Edit-Once 'config\immediatelyfast.json' @(
   , @('(?m)^([ \t]*"font_atlas_resizing": )true(?=,?\r?$)', 'false')
 ) 'ImmediatelyFast''s font atlas resizing is off: on some graphics drivers it turned all text into black boxes (one line)'
+# 11h. One titanium (2026-10-18, Lionel: "there's 2 titanium ... should dedupe them", option A): Almost Unified merges
+#      Antarchy's titanium into Modern Industrialization's once "titanium" is one of its materials. The server does the
+#      recipes; this only keeps the player's recipe viewer from showing both. Added after "tin", once, if absent.
+Edit-Once 'config\almostunified\placeholders.json' @(
+  , @('(?m)^([ \t]*)"tin",(?=\r?\n)(?![\s\S]*"titanium")', "`"tin`",`n    `"titanium`",")
+) 'Almost Unified merges the two titaniums (one line)'
 # 11c. lionel-turbo reads a missing switch as off, and config\lionel-turbo.properties is if-missing, so a player who
 #      already has the file would never get a switch added later (2026-10-09: megaCellsCompressionIndex,
 #      punchyMappedBonesOnly). Each switch of the shipped file that the player's file does not mention at all is

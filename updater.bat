@@ -197,6 +197,9 @@ set "LIONEL_UPDATER_LATER_VERSION=%VERSION_URL%"
 set "LIONEL_UPDATER_FILES_URL=%FILES_URL%"
 
 :run
+rem Started from PowerShell 7, Windows PowerShell would inherit its module path and miss its own commands (2026-10-21:
+rem Get-FileHash not found); with none set, it uses its defaults.
+set "PSModulePath="
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%WORK%\files\update.ps1"
 set "RC=%ERRORLEVEL%"
 goto :done

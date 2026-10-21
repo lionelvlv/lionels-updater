@@ -39,9 +39,15 @@ function Get-Files([string]$root) {
   @(Get-ChildItem -LiteralPath $full -Recurse -File | ForEach-Object { $_.FullName.Substring($full.Length + 1).Replace('\', '/') })
 }
 
+# SHA-1 with .NET, not Get-FileHash (2026-10-21): started from PowerShell 7, Windows PowerShell 5.1 inherits a module
+# path where Get-FileHash cannot be found, and the update stopped at the first file.
+function Get-Sha1([string]$path) {
+  $h = [Security.Cryptography.SHA1]::Create(); $f = [IO.File]::OpenRead($path)
+  try { -join ($h.ComputeHash($f) | ForEach-Object { $_.ToString('x2') }) } finally { $f.Dispose(); $h.Dispose() }
+}
+
 function Same-File([string]$a, [string]$b) {
-  (Get-Item -LiteralPath $a).Length -eq (Get-Item -LiteralPath $b).Length -and
-    (Get-FileHash -LiteralPath $a -Algorithm SHA1).Hash -eq (Get-FileHash -LiteralPath $b -Algorithm SHA1).Hash
+  (Get-Item -LiteralPath $a).Length -eq (Get-Item -LiteralPath $b).Length -and (Get-Sha1 $a) -eq (Get-Sha1 $b)
 }
 
 function Copy-To([string]$from, [string]$to) {
@@ -433,7 +439,6 @@ function Read-Manifest {
   $script:manifest = $list
   $true
 }
-function Get-Sha1([string]$path) { (Get-FileHash -LiteralPath $path -Algorithm SHA1).Hash.ToLowerInvariant() }
 # Downloads manifest entries to the given paths (each written as .part, checked, then moved into place). Several at a
 # time with curl's --parallel; an older curl without it gets them one by one. Returns the entries that failed.
 function Get-ManifestFiles([object[]]$items) {
@@ -955,7 +960,7 @@ if ($optionalMods.Count) {
       if ($env:LIONEL_UPDATER_OPTIONAL) { break }   # test.ps1 answers once
     }
   }
-  $sha = { param($p) (Get-FileHash -LiteralPath $p -Algorithm SHA1).Hash.ToLowerInvariant() }
+  $sha = { param($p) Get-Sha1 $p }
   $backupMods = Join-Path (Join-Path $Target 'lionels-updater-backup') 'mods'
   foreach ($m in $optionalMods) {
     if ($on[$m.Id]) {

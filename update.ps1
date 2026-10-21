@@ -405,12 +405,85 @@ $Target = $Target.TrimEnd('\')
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 Set-Content -LiteralPath $savedPath -Value $Target -Encoding UTF8
 
+# Per-file updates (2026-10-21, Lionel: "is there a way to make the updater more efficient ... if they have to download
+# the whole update.zip everytime"; option 1, Cloudflare R2). publish.ps1 puts every file of the update in a public R2
+# bucket under its SHA-1 (files/<sha1>), and a manifest listing them: "version|<label>" then "<set>|<path>|<sha1>|<size>"
+# lines (set: overwrite or if-missing). The .bat passes the bucket's address as LIONEL_UPDATER_FILES_URL and fetches
+# only this script and its small companions; here only the files the player does not already have, byte for byte, are
+# downloaded, straight into the instance (several at a time), each checked against its SHA-1. Unchanged files are never
+# downloaded again. Without the address, or if the manifest cannot be read, the whole zip is used as before.
+$filesUrl = $env:LIONEL_UPDATER_FILES_URL
+$manifestMode = $false
+$manifest = @()   # objects: Set, Rel, Sha, Size
+function Read-Manifest {
+  $mf = Join-Path $src 'manifest.txt'
+  $vf = Join-Path $src 'version.txt'
+  foreach ($pair in @(@("$filesUrl/manifest.txt", $mf), @("$filesUrl/version.txt", $vf))) {
+    & "$env:SystemRoot\System32\curl.exe" -L --fail -s -o $pair[1] $pair[0]
+    if ($LASTEXITCODE -or -not (Test-Path -LiteralPath $pair[1])) { return $false }
+  }
+  $list = @()
+  foreach ($line in [IO.File]::ReadAllLines($mf, (New-Object System.Text.UTF8Encoding($false)))) {
+    $p = $line.Split('|')
+    if ($p.Count -eq 4 -and $p[0] -in 'overwrite', 'if-missing' -and $p[2] -match '^[0-9a-f]{40}$') {
+      $list += [pscustomobject]@{ Set = $p[0]; Rel = $p[1]; Sha = $p[2]; Size = [int64]$p[3] }
+    }
+  }
+  if (-not @($list | Where-Object { $_.Set -eq 'overwrite' }).Count) { return $false }
+  $script:manifest = $list
+  $true
+}
+function Get-Sha1([string]$path) { (Get-FileHash -LiteralPath $path -Algorithm SHA1).Hash.ToLowerInvariant() }
+# Downloads manifest entries to the given paths (each written as .part, checked, then moved into place). Several at a
+# time with curl's --parallel; an older curl without it gets them one by one. Returns the entries that failed.
+function Get-ManifestFiles([object[]]$items) {
+  if (-not $items.Count) { return @() }
+  $cfg = Join-Path (Split-Path -Parent $src) 'files.curl'
+  $lines = foreach ($it in $items) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $it.To) | Out-Null
+    # curl's config files treat \ as an escape inside quotes: forward slashes, which Windows' curl accepts
+    'url = "' + "$filesUrl/files/$($it.Sha)" + '"'
+    'output = "' + "$($it.To).part".Replace('\', '/') + '"'
+  }
+  [IO.File]::WriteAllLines($cfg, [string[]]$lines)
+  Write-Host ('  Downloading {0} file(s), {1:N1} MB...' -f $items.Count, (($items | Measure-Object -Property Size -Sum).Sum / 1MB))
+  & "$env:SystemRoot\System32\curl.exe" -L --fail -s --retry 2 --parallel --parallel-max 6 -K $cfg 2>$null
+  if ($LASTEXITCODE -eq 2) { & "$env:SystemRoot\System32\curl.exe" -L --fail -s --retry 2 -K $cfg 2>$null }   # no --parallel
+  Remove-Item -LiteralPath $cfg -Force -ErrorAction SilentlyContinue
+  $failed = @()
+  foreach ($it in $items) {
+    $part = "$($it.To).part"
+    if ((Test-Path -LiteralPath $part) -and (Get-Sha1 $part) -eq $it.Sha) {
+      if (Test-Path -LiteralPath $it.To) { Remove-Item -LiteralPath $it.To -Force }
+      Move-Item -LiteralPath $part -Destination $it.To
+    } else {
+      if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force }
+      $failed += $it
+    }
+  }
+  $failed
+}
+if (-not (Test-Path -LiteralPath "$src\overwrite") -and $filesUrl) {
+  if (Read-Manifest) {
+    $latest = (Get-Content -LiteralPath (Join-Path $src 'version.txt') -TotalCount 1).Trim()
+    $packMark = Join-Path $Target 'lionels-updater-pack-version.txt'
+    $inPack = if (Test-Path -LiteralPath $packMark) { (Get-Content -LiteralPath $packMark -TotalCount 1).Trim() } else { '' }
+    if ($Mode -eq 'fresh' -and $inPack -eq $latest) {
+      Write-Host "`nThe whole pack already has the latest update ($latest): nothing more to download."
+      $env:LIONEL_UPDATER_LATER_ZIP = ''
+    } else { $manifestMode = $true }
+  } else {
+    Write-Host "`nThe file list of the update could not be read; the whole update zip is used instead." -ForegroundColor Yellow
+    foreach ($f in 'manifest.txt', 'version.txt') { $p = Join-Path $src $f; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
+  }
+}
+
 # A fresh install the .bat started without the update (2026-10-16, Lionel: "don't download the full update on the start,
 # because what if a user wants to do the full modpack download?"): it fetched only this script and its small companions
 # from GitHub. The whole pack says which update it already holds (lionels-updater-pack-version.txt, written by
 # make_full_pack.py only when every file of that update is in it): the latest, and nothing more is downloaded; older or
 # unknown, and the update zip is fetched now and applied as usual.
-$haveFiles = Test-Path -LiteralPath "$src\overwrite"
+$haveFiles = (Test-Path -LiteralPath "$src\overwrite") -or $manifestMode
 if (-not $haveFiles -and $env:LIONEL_UPDATER_LATER_ZIP) {
   $work = Split-Path -Parent $src
   $latestFile = Join-Path $src 'version.txt'
@@ -452,7 +525,7 @@ foreach ($jar in @(Get-ChildItem -LiteralPath (Join-Path $Target 'mods') -Filter
 
 # Check every path this update names before changing anything, so a bad update changes nothing at all.
 $recordPath = Join-Path $Target 'lionels-updater-installed.txt'
-$named = @(Get-Files "$src\overwrite") + @(Get-Files "$src\if-missing")
+$named = if ($manifestMode) { @($manifest | ForEach-Object { $_.Rel }) } else { @(Get-Files "$src\overwrite") + @(Get-Files "$src\if-missing") }
 foreach ($list in "$src\delete.txt", $recordPath) {
   if (Test-Path -LiteralPath $list) { $named += @(Get-Content -LiteralPath $list | Where-Object { $_.Trim() -and $_ -notmatch '^\s*#' }) }
 }
@@ -475,12 +548,20 @@ try { foreach ($rel in $named) { Resolve-Safe $rel | Out-Null } } catch { Fail "
 
 # Room on the ATM10 drive for what this update copies (a size that differs means a copy; 200 MB to spare).
 $needBytes = 0
-foreach ($set in 'overwrite', 'if-missing') {
-  foreach ($rel in (Get-Files "$src\$set")) {
-    $from = Get-Item -LiteralPath (Join-Path "$src\$set" $rel)
-    $dest = Join-Path $Target $rel.Replace('/', '\')
-    if (-not (Test-Path -LiteralPath $dest)) { $needBytes += $from.Length }
-    elseif ($set -eq 'overwrite') { $needBytes += [math]::Max(0, $from.Length - (Get-Item -LiteralPath $dest).Length) }
+if ($manifestMode) {
+  foreach ($e in $manifest) {
+    $dest = Join-Path $Target $e.Rel.Replace('/', '\')
+    if (-not (Test-Path -LiteralPath $dest)) { $needBytes += $e.Size }
+    elseif ($e.Set -eq 'overwrite') { $needBytes += [math]::Max(0, $e.Size - (Get-Item -LiteralPath $dest).Length) }
+  }
+} else {
+  foreach ($set in 'overwrite', 'if-missing') {
+    foreach ($rel in (Get-Files "$src\$set")) {
+      $from = Get-Item -LiteralPath (Join-Path "$src\$set" $rel)
+      $dest = Join-Path $Target $rel.Replace('/', '\')
+      if (-not (Test-Path -LiteralPath $dest)) { $needBytes += $from.Length }
+      elseif ($set -eq 'overwrite') { $needBytes += [math]::Max(0, $from.Length - (Get-Item -LiteralPath $dest).Length) }
+    }
   }
 }
 $needBytes += 200MB
@@ -494,9 +575,25 @@ $added = 0; $updated = 0; $removed = 0; $unchanged = 0
 
 # 3. Overwrite set: make these files match the zip.
 Write-Section 'Mods, scripts and resource packs'
-$installed = Get-Files "$src\overwrite"
+$installed = if ($manifestMode) { @($manifest | Where-Object { $_.Set -eq 'overwrite' } | ForEach-Object { $_.Rel }) } else { Get-Files "$src\overwrite" }
+if ($manifestMode) {
+  # only the files that are missing or differ, straight into the instance
+  $want = @()
+  $i = 0
+  $ow = @($manifest | Where-Object { $_.Set -eq 'overwrite' })
+  foreach ($e in $ow) {
+    Show-LookBar 'Checking files' ($i++ / [Math]::Max(1, $ow.Count)) "$i of $($ow.Count)"
+    $dest = Resolve-Safe $e.Rel
+    if ((Test-Path -LiteralPath $dest) -and (Get-Item -LiteralPath $dest).Length -eq $e.Size -and (Get-Sha1 $dest) -eq $e.Sha) { $unchanged++; continue }
+    $want += [pscustomobject]@{ Rel = $e.Rel; Sha = $e.Sha; Size = $e.Size; To = $dest; New = -not (Test-Path -LiteralPath $dest) }
+  }
+  Clear-LookLine
+  $bad = @(Get-ManifestFiles $want)
+  if ($bad.Count) { Fail ("$($bad.Count) file(s) of the update could not be downloaded (first: $($bad[0].Rel)). The ones before were updated;`nrun the updater again to finish. Check your internet connection.") }
+  foreach ($w in $want) { if ($w.New) { $added++; Write-Change '+' $w.Rel } else { $updated++; Write-Change '~' $w.Rel } }
+}
 $i = 0
-foreach ($rel in $installed) {
+foreach ($rel in $(if ($manifestMode) { @() } else { $installed })) {
   Show-LookBar 'Checking files' ($i++ / [Math]::Max(1, $installed.Count)) "$i of $($installed.Count)"
   $dest = Resolve-Safe $rel
   $from = Join-Path "$src\overwrite" $rel
@@ -555,8 +652,11 @@ function Read-ModIds([string]$jar) {
 }
 $shippedIds = @{}
 $shippedJars = @{}
-if (Test-Path -LiteralPath "$src\overwrite\mods") {
-  foreach ($j in @(Get-ChildItem -LiteralPath "$src\overwrite\mods" -Filter *.jar -File)) {
+$shippedDir = if ($manifestMode) { Join-Path $Target 'mods' } else { "$src\overwrite\mods" }
+$shippedList = if ($manifestMode) { @($installed | Where-Object { $_ -match '^mods/[^/]+\.jar$' } | ForEach-Object { Get-Item -LiteralPath (Resolve-Safe $_) }) }
+  elseif (Test-Path -LiteralPath $shippedDir) { @(Get-ChildItem -LiteralPath $shippedDir -Filter *.jar -File) } else { @() }
+if ($shippedList.Count) {
+  foreach ($j in $shippedList) {
     $shippedJars[$j.Name.ToLowerInvariant()] = $true
     foreach ($id in (Get-ModIds $j.FullName)) { $shippedIds[$id] = $j.Name }
   }
@@ -608,6 +708,197 @@ if (Test-Path -LiteralPath "$src\delete.txt") {
   }
 }
 
+# 5p. Potato mode (2026-10-21, Lionel: "a super low-spec pc complete with options and settings recommended for a
+#     potato"; "maximum cuts for maximum performance"; "8gb is the potato mode starter"). potato.txt names what it does:
+#     client-only mods off (renamed .jar.disabled), resource packs out of / into the list, settings in options.txt and
+#     five mods' config files. The server needs none of the mods, so a potato player still joins. Asked on every run but
+#     the launch check's (Enter keeps; first run: on with less than 16 GB of RAM). Everything it replaced is written down
+#     in lionels-updater-potato.txt and goes back when it is switched off; a setting the player changed themselves in
+#     the meantime stays as they set it. On, it also keeps every optional mod off (5c) and memory at 8 GB (12).
+$potato = $false
+$potatoMods = @{}; $potatoPacks = @(); $potatoSets = @()
+if (Test-Path -LiteralPath "$src\potato.txt") {
+  foreach ($line in @(Get-Content -LiteralPath "$src\potato.txt" -Encoding UTF8 | Where-Object { $_.Trim() -and $_ -notmatch '^\s*#' })) {
+    $p = $line.Split('|')
+    if ($p[0] -eq 'mod' -and $p.Count -ge 3) { $potatoMods[$p[1].Trim()] = $p[2].Trim() }
+    elseif ($p[0] -eq 'pack' -and $p.Count -ge 3) { $potatoPacks += , @($p[1], $p[2].Trim()) }
+    elseif ($p[0] -eq 'set' -and $p.Count -ge 6) { $potatoSets += [pscustomobject]@{ File = $p[1]; Kind = $p[2]; Section = $p[3]; Key = $p[4]; Value = ($p[5..($p.Count - 1)] -join '|') } }
+  }
+}
+# Where a setting's value sits in a file's text: a match whose group 1 is the value, or $null.
+function Find-Setting([string]$text, $s) {
+  if ($s.Kind -eq 'kv') { $m = [regex]::Match($text, '(?m)^' + [regex]::Escape($s.Key) + ':(.*?)(?=\r?$)'); if ($m.Success) { return $m } else { return $null } }
+  if ($s.Kind -eq 'json') {
+    $start = 0
+    if ($s.Section -ne '-') {
+      $sec = [regex]::Match($text, '"' + [regex]::Escape($s.Section) + '"\s*:\s*\{')
+      if (-not $sec.Success) { return $null }
+      $start = $sec.Index + $sec.Length
+    }
+    $m = ([regex]('"' + [regex]::Escape($s.Key) + '"\s*:\s*("(?:[^"\\]|\\.)*"|[-+\d.eE]+|true|false|null)')).Match($text, $start)
+    if ($m.Success) { return $m } else { return $null }
+  }
+  if ($s.Kind -eq 'toml') {
+    $sec = [regex]::Match($text, '(?m)^[ \t]*\[' + [regex]::Escape($s.Section) + '\][ \t]*(?=\r?$)')
+    if (-not $sec.Success) { return $null }
+    $after = $sec.Index + $sec.Length
+    $next = ([regex]'(?m)^[ \t]*\[').Match($text, $after)
+    $end = if ($next.Success) { $next.Index } else { $text.Length }
+    $m = ([regex]('(?m)^[ \t]*' + [regex]::Escape($s.Key) + '[ \t]*=[ \t]*(.*?)[ \t]*(?=\r?$)')).Match($text, $after)
+    if ($m.Success -and $m.Index -lt $end) { return $m } else { return $null }
+  }
+  $null
+}
+function Read-Utf8([string]$path) { [IO.File]::ReadAllText($path, (New-Object System.Text.UTF8Encoding($false))) }
+function Write-Utf8([string]$path, [string]$text) { [IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($false))) }
+# resourcePacks:["a","b"] in options.txt: the match (group 1 = inside the brackets) and its entries.
+function Get-PackList([string]$text) {
+  $m = [regex]::Match($text, '(?m)^resourcePacks:\[(.*?)\](?=\r?$)')
+  if (-not $m.Success) { return $null }
+  $entries = @([regex]::Matches($m.Groups[1].Value, '"((?:[^"\\]|\\.)*)"') | ForEach-Object { $_.Groups[1].Value })
+  [pscustomobject]@{ Match = $m; Entries = $entries }
+}
+function Test-PackRule([string]$entry, [string]$rule) {
+  if ($rule.EndsWith('*')) { return $entry.StartsWith($rule.Substring(0, $rule.Length - 1)) }
+  $entry -ceq $rule
+}
+if ($potatoMods.Count -or $potatoSets.Count) {
+  Write-Section 'Potato mode'
+  $potatoStatePath = Join-Path $Target 'lionels-updater-potato.txt'
+  # The record: "potato<TAB>on", "mod<TAB>mods/x.jar", "packs<TAB><the list as it was>", "packsnow<TAB><the list potato
+  # mode wrote>", "set<TAB>file<TAB>section<TAB>key<TAB>old value<TAB>potato value".
+  $was = $false; $recMods = @(); $recPacks = $null; $recPacksNow = $null; $recSets = @()
+  if (Test-Path -LiteralPath $potatoStatePath) {
+    foreach ($l in [IO.File]::ReadAllLines($potatoStatePath, (New-Object System.Text.UTF8Encoding($false)))) {
+      $f = $l.Split("`t")
+      switch ($f[0]) {
+        'potato' { $was = ($f[1] -eq 'on') }
+        'mod' { $recMods += $f[1] }
+        'packs' { $recPacks = $f[1] }
+        'packsnow' { $recPacksNow = $f[1] }
+        'set' { if ($f.Count -ge 6) { $recSets += [pscustomobject]@{ File = $f[1]; Section = $f[2]; Key = $f[3]; Old = $f[4]; New = $f[5] } } }
+      }
+    }
+  }
+  $potatoRam = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
+  if ($env:LIONEL_UPDATER_RAM_GB) { $potatoRam = [int]$env:LIONEL_UPDATER_RAM_GB }
+  $potato = if (Test-Path -LiteralPath $potatoStatePath) { $was } else { $potatoRam -lt 16 }
+  if (-not $fromGame) {
+    Write-Host "`nPotato mode, for weak PCs: shaders and other visual mods off, the lowest settings (render distance 3,"
+    Write-Host "Fast graphics, no particles, no sky, mobs and blocks drawn only close by), smaller textures, 8 GB."
+    Write-Host "You still join the server as normal. Switching it off later puts your own settings back."
+    Write-Host "This PC has $potatoRam GB of RAM. Potato mode is $(if ($potato) { 'ON' } else { 'OFF' })."
+    Write-Host '  Press Enter to keep it, or type Y (on) or N (off) and press Enter: ' -NoNewline
+    $answer = if ($env:LIONEL_UPDATER_POTATO) { $env:LIONEL_UPDATER_POTATO } else { [Console]::ReadLine() }
+    Write-Host ''
+    $answer = if ($answer) { $answer.Trim().ToUpper() } else { '' }
+    if ($answer -in 'Y', 'YES', 'ON') { $potato = $true }
+    elseif ($answer -in 'N', 'NO', 'OFF') { $potato = $false }
+    elseif ($answer) { Write-Host "  '$answer' is not Y or N: potato mode stays $(if ($potato) { 'on' } else { 'off' })." -ForegroundColor Yellow }
+  }
+  $modsDir = Join-Path $Target 'mods'
+  $optionsPath = Join-Path $Target 'options.txt'
+  if ($potato) {
+    # Mods: every enabled jar declaring one of the mod ids.
+    foreach ($j in @(Get-ChildItem -LiteralPath $modsDir -Filter *.jar -File)) {
+      $hit = @(Get-ModIds $j.FullName | Where-Object { $potatoMods.ContainsKey($_) })
+      if (-not $hit.Count) { continue }
+      if (Test-Path -LiteralPath "$($j.FullName).disabled") { Remove-Item -LiteralPath "$($j.FullName).disabled" -Force }
+      Move-Item -LiteralPath $j.FullName -Destination "$($j.FullName).disabled"
+      $rel = "mods/$($j.Name)"
+      if ($recMods -notcontains $rel) { $recMods += $rel }
+      $removed++; Write-Change '-' "$rel  ($($potatoMods[$hit[0]]): off for potato mode, renamed .jar.disabled)"
+    }
+    # Resource packs: taken out of / added to the list, the list as it was kept once.
+    if (Test-Path -LiteralPath $optionsPath) {
+      $text = Read-Utf8 $optionsPath
+      $list = Get-PackList $text
+      if ($list) {
+        $keep = @($list.Entries | Where-Object { $e = $_; -not @($potatoPacks | Where-Object { $_[1] -eq 'off' -and (Test-PackRule $e $_[0]) }).Count })
+        foreach ($r in $potatoPacks) {
+          if ($r[1] -ne 'on' -or $keep -contains $r[0]) { continue }
+          $file = $r[0] -replace '^file/', ''
+          if ($r[0].StartsWith('file/') -and (Test-Path -LiteralPath (Join-Path (Join-Path $Target 'resourcepacks') $file))) { $keep += $r[0] }
+        }
+        $newInside = ($keep | ForEach-Object { '"' + $_ + '"' }) -join ','
+        if ($newInside -cne $list.Match.Groups[1].Value) {
+          if (-not (Test-Path -LiteralPath "$optionsPath.bak-lionel-potato")) { Copy-Item -LiteralPath $optionsPath -Destination "$optionsPath.bak-lionel-potato" }
+          if ($null -eq $recPacks) { $recPacks = $list.Match.Groups[1].Value }
+          $text = $text.Remove($list.Match.Groups[1].Index, $list.Match.Groups[1].Length).Insert($list.Match.Groups[1].Index, $newInside)
+          Write-Utf8 $optionsPath $text
+          $gone = @($list.Entries | Where-Object { $keep -notcontains $_ }); $new = @($keep | Where-Object { $list.Entries -notcontains $_ })
+          Write-Change '~' ("options.txt: resource packs for potato mode" + $(if ($gone.Count) { "; off: $($gone -join ', ')" }) + $(if ($new.Count) { "; on: $($new -join ', ')" }))
+        }
+        $recPacksNow = $newInside
+      }
+    }
+    # Settings: each one recorded the first time potato mode sets it, so a value the player changes afterwards stays.
+    $changed = @{}
+    foreach ($s in $potatoSets) {
+      $path = Join-Path $Target $s.File.Replace('/', '\')
+      if (-not (Test-Path -LiteralPath $path)) { continue }   # written by the game on its first start: set on the next run
+      if (@($recSets | Where-Object { $_.File -eq $s.File -and $_.Section -eq $s.Section -and $_.Key -eq $s.Key }).Count) { continue }
+      $text = Read-Utf8 $path
+      $m = Find-Setting $text $s
+      if (-not $m) { continue }
+      $old = $m.Groups[1].Value
+      $recSets += [pscustomobject]@{ File = $s.File; Section = $s.Section; Key = $s.Key; Old = $old; New = $s.Value }
+      if ($old -ceq $s.Value) { continue }
+      if (-not (Test-Path -LiteralPath "$path.bak-lionel-potato")) { Copy-Item -LiteralPath $path -Destination "$path.bak-lionel-potato" }
+      Write-Utf8 $path $text.Remove($m.Groups[1].Index, $m.Groups[1].Length).Insert($m.Groups[1].Index, $s.Value)
+      $changed[$s.File] = 1 + $(if ($changed.ContainsKey($s.File)) { $changed[$s.File] } else { 0 })
+    }
+    foreach ($k in $changed.Keys) { Write-Change '~' "$k`: $($changed[$k]) setting(s) set for potato mode (your old values are kept to put back)" }
+  }
+  elseif ($was) {
+    foreach ($rel in $recMods) {
+      $jar = Resolve-Safe $rel
+      if ((Test-Path -LiteralPath "$jar.disabled") -and -not (Test-Path -LiteralPath $jar)) {
+        Move-Item -LiteralPath "$jar.disabled" -Destination $jar
+        $added++; Write-Change '+' "$rel  (potato mode off: switched back on)"
+      }
+    }
+    if ((Test-Path -LiteralPath $optionsPath) -and $null -ne $recPacks) {
+      $text = Read-Utf8 $optionsPath
+      $list = Get-PackList $text
+      if ($list) {
+        $inside = $list.Match.Groups[1].Value
+        if ($inside -ceq $recPacksNow) { $back = $recPacks }   # untouched since: exactly as it was
+        else {
+          # the player changed packs meanwhile: theirs stay, the ones potato mode took out come back at the end, the
+          # ones it added go
+          $before = @([regex]::Matches($recPacks, '"((?:[^"\\]|\\.)*)"') | ForEach-Object { $_.Groups[1].Value })
+          $potatoNow = @([regex]::Matches($recPacksNow, '"((?:[^"\\]|\\.)*)"') | ForEach-Object { $_.Groups[1].Value })
+          $entries = @($list.Entries | Where-Object { $before -contains $_ -or $potatoNow -notcontains $_ })
+          foreach ($e in $before) { if ($entries -notcontains $e) { $entries += $e } }
+          $back = ($entries | ForEach-Object { '"' + $_ + '"' }) -join ','
+        }
+        if ($back -cne $inside) {
+          Write-Utf8 $optionsPath $text.Remove($list.Match.Groups[1].Index, $list.Match.Groups[1].Length).Insert($list.Match.Groups[1].Index, $back)
+          Write-Change '~' 'options.txt: your resource packs as they were before potato mode'
+        }
+      }
+    }
+    $restored = @{}
+    foreach ($r in $recSets) {
+      $path = Join-Path $Target $r.File.Replace('/', '\')
+      if (-not (Test-Path -LiteralPath $path)) { continue }
+      $text = Read-Utf8 $path
+      $m = Find-Setting $text ([pscustomobject]@{ Kind = $(if ($r.File -eq 'options.txt') { 'kv' } elseif ($r.File.EndsWith('.toml')) { 'toml' } else { 'json' }); Section = $r.Section; Key = $r.Key })
+      if (-not $m -or $m.Groups[1].Value -cne $r.New -or $r.Old -ceq $r.New) { continue }   # changed by the player since: theirs
+      Write-Utf8 $path $text.Remove($m.Groups[1].Index, $m.Groups[1].Length).Insert($m.Groups[1].Index, $r.Old)
+      $restored[$r.File] = 1 + $(if ($restored.ContainsKey($r.File)) { $restored[$r.File] } else { 0 })
+    }
+    foreach ($k in $restored.Keys) { Write-Change '~' "$k`: $($restored[$k]) setting(s) back to yours (potato mode off)" }
+    $recMods = @(); $recPacks = $null; $recPacksNow = $null; $recSets = @()
+  }
+  $out = @("potato`t$(if ($potato) { 'on' } else { 'off' })") + @($recMods | ForEach-Object { "mod`t$_" })
+  if ($null -ne $recPacks) { $out += "packs`t$recPacks"; $out += "packsnow`t$recPacksNow" }
+  $out += @($recSets | ForEach-Object { "set`t$($_.File)`t$($_.Section)`t$($_.Key)`t$($_.Old)`t$($_.New)" })
+  [IO.File]::WriteAllLines($potatoStatePath, [string[]]$out, (New-Object System.Text.UTF8Encoding($false)))
+  if ($potato) { Write-Host '  Potato mode is on.' } elseif ($was) { Write-Host '  Potato mode is off: everything it changed is back.' }
+}
+
 # 5c. Optional mods (2026-10-17, Lionel: Shoulder Surfing and Punchy, "if it's already present, disable the mods
 #     respectively"; "add distant horizons to the optional installs in the updater (updating or fresh install)").
 #     optional.txt names them. Asked on every run but the launch check's (Enter keeps); the choice is kept per instance
@@ -642,7 +933,10 @@ if ($optionalMods.Count) {
     $hadOff = [bool]@($m.ModIds | Where-Object { $offById.ContainsKey($_) }).Count
     $on[$m.Id] = if ($saved.ContainsKey($m.Id)) { $saved[$m.Id] } elseif ($has) { $true } elseif ($hadOff) { $false } else { $m.Default }
   }
-  if (-not $fromGame) {
+  # Potato mode (5p): all off for this run, without asking; the player's own choices stay saved for when it is off.
+  $ownChoice = @{}; foreach ($k in $on.Keys) { $ownChoice[$k] = $on[$k] }
+  if ($potato) { foreach ($m in $optionalMods) { $on[$m.Id] = $false }; Write-Host "`nOptional mods: all off while potato mode is on." }
+  elseif (-not $fromGame) {
     while ($true) {
       Write-Host "`nOptional mods (only on this PC; the server does not need them):"
       for ($k = 0; $k -lt $optionalMods.Count; $k++) {
@@ -711,14 +1005,23 @@ if ($optionalMods.Count) {
       }
     }
   }
-  Set-Content -LiteralPath $choicePath -Value @($optionalMods | ForEach-Object { "$($_.Id)=$(if ($on[$_.Id]) { 'on' } else { 'off' })" }) -Encoding ASCII
+  $keepChoice = if ($potato) { $ownChoice } else { $on }
+  Set-Content -LiteralPath $choicePath -Value @($optionalMods | ForEach-Object { "$($_.Id)=$(if ($keepChoice[$_.Id]) { 'on' } else { 'off' })" }) -Encoding ASCII
 }
 
 # 6. Defaults: only where the player has no file of their own.
 Write-Section 'Settings'
-foreach ($rel in (Get-Files "$src\if-missing")) {
-  $dest = Resolve-Safe $rel
-  if (-not (Test-Path -LiteralPath $dest)) { Copy-To (Join-Path "$src\if-missing" $rel) $dest; $added++; Write-Change '+' $rel }
+if ($manifestMode) {
+  $want = @($manifest | Where-Object { $_.Set -eq 'if-missing' -and -not (Test-Path -LiteralPath (Resolve-Safe $_.Rel)) } |
+    ForEach-Object { [pscustomobject]@{ Rel = $_.Rel; Sha = $_.Sha; Size = $_.Size; To = (Resolve-Safe $_.Rel) } })
+  $bad = @(Get-ManifestFiles $want)
+  foreach ($w in $want) { if ($bad -notcontains $w) { $added++; Write-Change '+' $w.Rel } }
+  if ($bad.Count) { Write-Host "  $($bad.Count) default file(s) could not be downloaded; the next run tries again." -ForegroundColor Yellow }
+} else {
+  foreach ($rel in (Get-Files "$src\if-missing")) {
+    $dest = Resolve-Safe $rel
+    if (-not (Test-Path -LiteralPath $dest)) { Copy-To (Join-Path "$src\if-missing" $rel) $dest; $added++; Write-Change '+' $rel }
+  }
 }
 
 # 7. The Shooting Star font pack has to be switched on. This adds that one entry to the resource pack list in
@@ -864,6 +1167,10 @@ Edit-Once 'config\almostunified\placeholders.json' @(
 #      appended with its comment line. A switch the player has, on or off, is never touched.
 $turboRel = 'config\lionel-turbo.properties'
 $turboShipped = Join-Path $src "if-missing\$turboRel"
+if ($manifestMode) {
+  $t = @($manifest | Where-Object { $_.Set -eq 'if-missing' -and $_.Rel -eq $turboRel.Replace('\', '/') })
+  if ($t.Count) { [void](Get-ManifestFiles @([pscustomobject]@{ Rel = $t[0].Rel; Sha = $t[0].Sha; Size = $t[0].Size; To = $turboShipped })) }
+}
 $turboFile = Join-Path $Target $turboRel
 if ((Test-Path -LiteralPath $turboShipped) -and (Test-Path -LiteralPath $turboFile)) {
   $utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -936,8 +1243,9 @@ if (Test-Path -LiteralPath $memSeen) {
   $last = (Get-Content -LiteralPath $memSeen -TotalCount 1).Trim()
   if ($last -in '8', '12', '16') { $memGb = [int]$last; $memWhy = 'your last choice' }
 }
+if ($potato) { $memGb = 8; $memWhy = 'potato mode' }
 Write-Host "`nMemory for Minecraft: $memGb GB ($memWhy; this PC has $ramGb GB of RAM)."
-if ($fromGame -and -not $env:LIONEL_UPDATER_MEMORY) { $pick = '' }   # kept: the game is waiting
+if ($potato -or ($fromGame -and -not $env:LIONEL_UPDATER_MEMORY)) { $pick = '' }   # kept: potato mode, or the game is waiting
 else {
   Write-Host '  Press Enter to keep it, or type 8, 12 or 16 and press Enter: ' -NoNewline
   $pick = if ($env:LIONEL_UPDATER_MEMORY) { $env:LIONEL_UPDATER_MEMORY } else { [Console]::ReadLine() }
@@ -947,7 +1255,7 @@ if ($pick) { $pick = $pick.Trim().ToUpper().TrimEnd('B').TrimEnd('G').Trim() }
 if ($pick -in '8', '12', '16') { $memGb = [int]$pick }
 elseif ($pick) { Write-Host "  '$pick' is not 8, 12 or 16: keeping $memGb GB." -ForegroundColor Yellow }
 if ($memGb -gt $ramGb - 6) { Write-Host "  Warning: $memGb GB leaves Windows less than 6 GB of this PC's $ramGb GB. Pick a smaller preset if the PC slows down." -ForegroundColor Yellow }
-Set-Content -LiteralPath $memSeen -Value $memGb -Encoding UTF8
+if (-not $potato) { Set-Content -LiteralPath $memSeen -Value $memGb -Encoding UTF8 }   # potato mode keeps the player's own preset for later
 $memMb = $memGb * 1024
 # 12 and 16 GB: Lionel's own line (generational ZGC). 8 GB: ZGC needs room to spare, so the G1 flags most packs use.
 $gc = if ($memGb -ge 12) { ' -XX:+UseZGC -XX:+ZGenerational' }
@@ -960,6 +1268,56 @@ $argRest = "-XX:+UnlockExperimentalVMOptions$gc -XX:+DisableExplicitGC -XX:+Perf
   ' -XX:+UnlockDiagnosticVMOptions -XX:-BytecodeVerificationRemote'
 $argLine = "-Xmx${memGb}G $argRest"
 $javaExe = Join-Path $javaHome 'bin\javaw.exe'
+# 12c. The graphics card (2026-10-21, Lionel: "research any black magic"): on a laptop with a built-in and a dedicated
+#      graphics chip, Windows may hand Java the weak built-in one, a large frame-rate loss. Windows' own per-program
+#      setting (Settings, Display, Graphics: "High performance") for the Java the launchers are told to use. Per user, no
+#      admin; set only when the player has not chosen anything for that Java themselves.
+if ($javaOk) {
+  $gpuKey = if ($env:LIONEL_UPDATER_GPU_KEY) { $env:LIONEL_UPDATER_GPU_KEY } else { 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences' }
+  $gpuNow = (Get-ItemProperty -LiteralPath $gpuKey -ErrorAction SilentlyContinue).$javaExe
+  if (-not $gpuNow) {
+    try {
+      if (-not (Test-Path -LiteralPath $gpuKey)) { New-Item -Path $gpuKey -Force | Out-Null }
+      New-ItemProperty -LiteralPath $gpuKey -Name $javaExe -Value 'GpuPreference=2;' -PropertyType String -Force | Out-Null
+      Write-Change '~' 'Windows graphics setting: the game''s Java uses the high-performance graphics card (Settings, Display, Graphics changes it)'
+    } catch { Write-Host '  Could not set the graphics card preference; the game runs as before.' -ForegroundColor Yellow }
+  }
+}
+# 12d. Windows Security exclusion (2026-10-21, Lionel: "sure add the exclusion"): Windows Security scans every mod jar
+#      the game opens at each start, ~500 of them, which drags a weak PC's start out further. With the player's yes,
+#      the ATM10 folder and the updater's Java folder are excluded (an admin prompt; Windows asks itself). Nothing else.
+#      Asked once per ATM10 folder (Enter is no); the answer is kept in defender.txt, so a no is not asked again.
+if (-not $fromGame) {
+  $defSeen = Join-Path $stateDir 'defender.txt'
+  $defLines = if (Test-Path -LiteralPath $defSeen) { @(Get-Content -LiteralPath $defSeen) } else { @() }
+  if (-not @($defLines | Where-Object { $_.EndsWith("`t$Target") }).Count) {
+    Write-Host "`nWindows Security checks every mod file each time the game starts (about 500 of them), which makes"
+    Write-Host 'the start slower, much slower on a weak PC. The updater can tell it to skip two folders:'
+    Write-Host "  $Target"
+    if ($javaOk) { Write-Host "  $javaHome" }
+    Write-Host 'Windows Security will then no longer check those folders for viruses. Windows asks for admin permission.'
+    Write-Host '  Add the exclusion? Type Y and press Enter; Enter alone or N skips it (not asked again for this folder): ' -NoNewline
+    $answer = if ($env:LIONEL_UPDATER_DEFENDER) { $env:LIONEL_UPDATER_DEFENDER } else { [Console]::ReadLine() }
+    Write-Host ''
+    $answer = if ($answer) { $answer.Trim().ToUpper() } else { '' }
+    $result = 'no'
+    if ($answer -in 'Y', 'YES') {
+      $paths = @($Target) + $(if ($javaOk) { @($javaHome) } else { @() })
+      $cmd = 'Add-MpPreference -ExclusionPath ' + (($paths | ForEach-Object { "'" + $_.Replace("'", "''") + "'" }) -join ',') + '; exit $(if ($?) { 0 } else { 1 })'
+      if ($env:LIONEL_UPDATER_DEFENDER_DRY) { Set-Content -LiteralPath $env:LIONEL_UPDATER_DEFENDER_DRY -Value $cmd; $ok = $true }
+      else {
+        try {
+          $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
+          $p = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile -EncodedCommand $enc"
+          $ok = ($p.ExitCode -eq 0)
+        } catch { $ok = $false }   # the admin prompt was declined
+      }
+      if ($ok) { $result = 'yes'; Write-Change '~' "Windows Security: $($paths -join ' and ') excluded from scanning" }
+      else { $result = ''; Write-Host '  Not added (the admin prompt was declined, or another antivirus is in charge). Asked again next time.' -ForegroundColor Yellow }
+    }
+    if ($result) { Add-Content -LiteralPath $defSeen -Value "$result`t$Target" -Encoding UTF8 }
+  }
+}
 $javaNote = if ($javaOk) { "Java: $javaExe (Java 21.0.12.1, which the patch needs)." }
   else { 'Java: the launcher''s own (Java 21.0.12.1 could not be downloaded, so the resolver patch is left out: about a minute slower).' }
 

@@ -20,8 +20,14 @@ set "ZIP_URL=https://drive.usercontent.google.com/download?id=%DRIVE_ID%&export=
 set "VERSION_URL=https://drive.usercontent.google.com/download?id=%VERSION_ID%&export=download&confirm=t"
 rem update.ps1 and its companions for a fresh install (publish.ps1 pushes them there)
 set "LOGIC_URL=https://raw.githubusercontent.com/lionelvlv/lionels-updater/main"
+rem Per-file updates (2026-10-21): the public Cloudflare R2 bucket with the update's files, its file list and version
+rem file (publish.ps1 uploads them). Set: an update fetches only the updater's small files, then update.ps1 downloads
+rem only the files that changed. Empty: the whole zip from Google Drive, as before.
+set "FILES_URL=https://pub-99b51619b26e447086dcdec6ff91a3f9.r2.dev"
 rem Used by test.ps1 only.
 if defined LIONEL_UPDATER_LOGIC_URL set "LOGIC_URL=%LIONEL_UPDATER_LOGIC_URL%"
+if defined LIONEL_UPDATER_FILES_URL set "FILES_URL=%LIONEL_UPDATER_FILES_URL%"
+if /i "%FILES_URL%"=="none" set "FILES_URL="
 if defined LIONEL_UPDATER_ZIP_URL set "ZIP_URL=%LIONEL_UPDATER_ZIP_URL%"
 if defined LIONEL_UPDATER_VERSION_URL set "VERSION_URL=%LIONEL_UPDATER_VERSION_URL%"
 
@@ -32,6 +38,9 @@ if defined LIONEL_UPDATER_SELF_URL set "SELF_URL=%LIONEL_UPDATER_SELF_URL%"
 set "SELF=%TEMP%\lionels-updater-self.bat"
 if defined LIONEL_UPDATER_SELF_DONE goto :selfdone
 if /i "%SELF_URL%"=="none" goto :selfdone
+rem Never in Lionel's source folder (a git repository): the copy there is newer than GitHub's until the next publish,
+rem and on 2026-10-21 a run from there replaced it with GitHub's older one.
+if exist "%~dp0.git\" goto :selfdone
 "%SystemRoot%\System32\curl.exe" -L --fail -s -o "%SELF%" "%SELF_URL%"
 if errorlevel 1 goto :selfdone
 findstr /b /c:"rem lionels-updater stub" "%SELF%" >nul 2>&1
@@ -87,6 +96,9 @@ if "%DRIVE_ID%"=="PUT_DRIVE_FILE_ID_HERE" if not defined LIONEL_UPDATER_ZIP_URL 
   goto :done
 )
 
+rem With the R2 bucket: its version file, and only small files go through the temporary folder.
+if defined FILES_URL if not defined LIONEL_UPDATER_VERSION_URL set "VERSION_URL=%FILES_URL%/version.txt"
+if defined FILES_URL set "NEED_MB=300"
 rem Nothing new? Then skip the big download. Any doubt (no record, no answer) means download.
 if "%VERSION_ID%"=="PUT_VERSION_FILE_ID_HERE" if not defined LIONEL_UPDATER_VERSION_URL goto :space
 if not exist "%HAVE%" goto :space
@@ -155,6 +167,7 @@ if exist "%WORK%" rmdir /s /q "%WORK%"
 mkdir "%WORK%\files" || goto :done
 if not "%ZIP%"=="" goto :unpack
 if defined FRESH goto :logic
+if defined FILES_URL goto :logic
 
 :download
 echo Downloading the latest update...
@@ -173,7 +186,7 @@ rem A fresh install: only the updater's own small files, from the GitHub copy pu
 rem itself is fetched by update.ps1 if the whole pack turns out older than it.
 :logic
 echo Getting the updater...
-for %%F in (update.ps1 look.ps1 delete.txt optional.txt java/resolver-patch.jar java/lionel-check.jar guide/modrinth-java-and-memory.png guide/modrinth-launch-hooks.png) do (
+for %%F in (update.ps1 look.ps1 delete.txt optional.txt potato.txt java/resolver-patch.jar java/lionel-check.jar guide/modrinth-java-and-memory.png guide/modrinth-launch-hooks.png) do (
   "%SystemRoot%\System32\curl.exe" -L --fail -s --create-dirs -o "%WORK%\files\%%F" "%LOGIC_URL%/%%F"
   if errorlevel 1 goto :baddownload
 )
@@ -181,6 +194,7 @@ findstr /b /c:"# Lionel's Additions updater: the logic." "%WORK%\files\update.ps
 if errorlevel 1 goto :baddownload
 set "LIONEL_UPDATER_LATER_ZIP=%ZIP_URL%"
 set "LIONEL_UPDATER_LATER_VERSION=%VERSION_URL%"
+set "LIONEL_UPDATER_FILES_URL=%FILES_URL%"
 
 :run
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%WORK%\files\update.ps1"

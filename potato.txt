@@ -1,0 +1,130 @@
+# Potato mode (update.ps1 and update_linux.py, step 5p; 2026-10-21, Lionel: "a super low-spec pc complete with options
+# and settings recommended for a potato"; "maximum cuts for maximum performance"; "8gb is the potato mode starter").
+# The player says yes or no on every run but the launch check's (Enter keeps). On: the lines below are applied and what
+# they replaced is written down in the instance (lionels-updater-potato.txt); off again: all of it goes back. A setting
+# the player changed themselves while in potato mode is left as they set it. The optional mods (optional.txt) are all
+# off while potato mode is on; the player's own choices come back with it off. Memory: 8 GB.
+#
+# mod|<mod id>|<name>      every jar declaring that mod id is renamed .jar.disabled. Only mods the server does not have
+#                          and that nothing else needs. NOT here, on purpose: Entity Model/Texture/Sound Features
+#                          (Villager News requires all three; their settings below make them cheap instead).
+# pack|<entry>|off|on      a resource pack entry in options.txt: off = taken out of the list (a * at the end matches any
+#                          rest of the name), on = added at the end (only if the pack is in resourcepacks).
+# set|<file>|<kind>|<section>|<key>|<value>
+#                          kind kv: options.txt "key:value"; json: "key": value, searched from "section": { (- = from the
+#                          top); toml: key = value inside [section]. The value is written as it stands here. Each key and
+#                          value was checked against the mod's own config class (javap, 2026-10-21).
+
+mod|iris|Iris (shaders)
+mod|iris_search|Iris Search (needs Iris)
+mod|euphoria_patcher|Euphoria Patcher (shader add-on)
+mod|colorwheel|Colorwheel (shaders on Flywheel)
+mod|colorwheel_patcher|Colorwheel Patcher
+mod|notenoughanimations|Not Enough Animations
+mod|auroras|Auroras
+mod|rainbows|Rainbows
+mod|simple_weather|Simple Weather
+mod|darkmodeeverywhere|Dark Mode Everywhere (a shader on every screen)
+mod|optifinecapes|OptiFine Capes (downloads and draws capes)
+mod|resourcify|Resourcify
+
+pack|file/FreshAnimations*|off
+pack|file/HyperPunchy*|off
+pack|file/Modded Swords x Punchy*|off
+pack|file/NewGlowingOres*|off
+pack|file/Enchantment Outlines*|off
+pack|file/lionel-lowres.zip|on
+
+# Vanilla video settings
+set|options.txt|kv|-|renderDistance|3
+set|options.txt|kv|-|simulationDistance|5
+set|options.txt|kv|-|graphicsMode|0
+set|options.txt|kv|-|ao|false
+set|options.txt|kv|-|particles|2
+set|options.txt|kv|-|mipmapLevels|0
+set|options.txt|kv|-|biomeBlendRadius|0
+set|options.txt|kv|-|entityDistanceScaling|0.5
+set|options.txt|kv|-|renderClouds|"false"
+set|options.txt|kv|-|entityShadows|false
+set|options.txt|kv|-|menuBackgroundBlurriness|0
+set|options.txt|kv|-|maxFps|60
+set|options.txt|kv|-|enableVsync|false
+set|options.txt|kv|-|prioritizeChunkUpdates|0
+
+# Sodium 0.8.13 (config/sodium-options.json)
+set|config/sodium-options.json|json|quality|weather_quality|"FAST"
+set|config/sodium-options.json|json|quality|leaves_quality|"FAST"
+set|config/sodium-options.json|json|quality|enable_vignette|false
+set|config/sodium-options.json|json|performance|chunk_build_defer_mode|"ALWAYS"
+set|config/sodium-options.json|json|performance|animate_only_visible_textures|true
+set|config/sodium-options.json|json|performance|use_entity_culling|true
+set|config/sodium-options.json|json|performance|use_fog_occlusion|true
+set|config/sodium-options.json|json|performance|use_block_face_culling|true
+set|config/sodium-options.json|json|performance|quad_splitting_mode|"OFF"
+set|config/sodium-options.json|json|debug|terrain_sorting_enabled|false
+
+# Sodium Extra 0.9.3 (config/sodium-extra-options.json). Each key checked against the mixin that reads it (javap):
+# particles=false cancels every particle in the particle engine (2026-10-21, Lionel: "0 particles at all"; boss attack
+# effects made of particles are gone too). No sky (fog colour instead), sun, moon, stars, rain or snow, biome or sky
+# colours, beacon beams or armour stands. Paintings stay: Sodium Extra's painting switch is read by nothing.
+set|config/sodium-extra-options.json|json|animation_settings|animation|false
+set|config/sodium-extra-options.json|json|particle_settings|particles|false
+set|config/sodium-extra-options.json|json|particle_settings|rain_splash|false
+set|config/sodium-extra-options.json|json|particle_settings|block_break|false
+set|config/sodium-extra-options.json|json|particle_settings|block_breaking|false
+set|config/sodium-extra-options.json|json|detail_settings|sky|false
+set|config/sodium-extra-options.json|json|detail_settings|sun|false
+set|config/sodium-extra-options.json|json|detail_settings|moon|false
+set|config/sodium-extra-options.json|json|detail_settings|stars|false
+set|config/sodium-extra-options.json|json|detail_settings|rain_snow|false
+set|config/sodium-extra-options.json|json|detail_settings|biome_colors|false
+set|config/sodium-extra-options.json|json|detail_settings|sky_colors|false
+set|config/sodium-extra-options.json|json|render_settings|beacon_beam|false
+set|config/sodium-extra-options.json|json|render_settings|armor_stand|false
+set|config/sodium-extra-options.json|json|render_settings|limit_beacon_beam_height|true
+set|config/sodium-extra-options.json|json|render_settings|enchanting_table_book|false
+set|config/sodium-extra-options.json|json|render_settings|item_frame_name_tag|false
+set|config/sodium-extra-options.json|json|extra_settings|advancement_toast|false
+set|config/sodium-extra-options.json|json|extra_settings|recipe_toast|false
+set|config/sodium-extra-options.json|json|extra_settings|tutorial_toast|false
+
+# Chloride 1.8.1 (config/chloride-client.toml). Culling distances are squared blocks across (144 = 12 blocks, 576 = 24,
+# 1024 = 32) and plain blocks up and down. Block entities (chests, machines, drawers, signs) within 12 blocks, other
+# entities 24, monsters 32 (render distance 3 is 48); only the nearest 25 entities at all; no name tags over mobs/items.
+set|config/chloride-client.toml|toml|world|leavesCulling|"ALL"
+set|config/chloride-client.toml|toml|world|chunkFadeSpeed|"OFF"
+set|config/chloride-client.toml|toml|fastBlocks|chests|true
+set|config/chloride-client.toml|toml|fastBlocks|beds|true
+set|config/chloride-client.toml|toml|particles|rain|false
+set|config/chloride-client.toml|toml|particles|rainDrops|false
+set|config/chloride-client.toml|toml|particles|blockCracking|false
+set|config/chloride-client.toml|toml|particles|blockDestroyed|false
+set|config/chloride-client.toml|toml|culling|tileEntities|true
+set|config/chloride-client.toml|toml|culling|tileEntityDistanceX|144
+set|config/chloride-client.toml|toml|culling|tileEntityDistanceY|8
+set|config/chloride-client.toml|toml|culling|entities|true
+set|config/chloride-client.toml|toml|culling|entityDistanceX|576
+set|config/chloride-client.toml|toml|culling|entityDistanceY|16
+set|config/chloride-client.toml|toml|culling|monsters|true
+set|config/chloride-client.toml|toml|culling|monsterDistanceX|1024
+set|config/chloride-client.toml|toml|culling|monsterDistanceY|24
+set|config/chloride-client.toml|toml|culling|entityLimit|25
+set|config/chloride-client.toml|toml|nametags|entities|false
+set|config/chloride-client.toml|toml|nametags|items|false
+set|config/chloride-client.toml|toml|interface|fontShadows|false
+set|config/chloride-client.toml|toml|interface|hideJREMI|true
+
+# Entity Model Features 3.3.9 and Entity Texture Features 7.2.4: kept (Villager News), made cheap
+set|config/entity_model_features.json|json|-|modelUpdateFrequency|"Slow"
+set|config/entity_model_features.json|json|-|animationLODDistance|4
+set|config/entity_model_features.json|json|-|retainDetailOnLowFps|false
+set|config/entity_model_features.json|json|-|retainDetailOnLargerMobs|false
+set|config/entity_texture_features.json|json|-|textureUpdateFrequency_V2|"Slow"
+set|config/entity_texture_features.json|json|-|enableEmissiveTextures|false
+set|config/entity_texture_features.json|json|-|enableEmissiveBlockEntities|false
+set|config/entity_texture_features.json|json|-|enableEnchantedTextures|false
+set|config/entity_texture_features.json|json|-|enableCustomBlockEntities|false
+set|config/entity_texture_features.json|json|-|enableBlinking|false
+set|config/entity_texture_features.json|json|-|skinFeaturesEnabled|false
+set|config/entity_texture_features.json|json|-|use3DSkinLayerPatch|false
+set|config/entity_texture_features.json|json|-|enableFullBodyWardenTextures|false

@@ -6,7 +6,8 @@
 # beside this file if there is one.
 # lionels-updater linux stub
 
-logic_url="${LIONEL_UPDATER_LOGIC_URL:-https://raw.githubusercontent.com/lionelvlv/lionels-updater/main}/update_linux.py"
+# Its own repo since 2026-10-21 (lionelvlv/lionels-updater-linux); the main repo keeps a copy for older .sh files.
+logic_url="${LIONEL_UPDATER_LOGIC_URL:-https://raw.githubusercontent.com/lionelvlv/lionels-updater-linux/main}/update_linux.py"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 self="$here/$(basename "${BASH_SOURCE[0]}")"
 

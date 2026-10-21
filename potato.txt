@@ -12,7 +12,7 @@
 #                          rest of the name), on = added at the end (only if the pack is in resourcepacks).
 # set|<file>|<kind>|<section>|<key>|<value>
 #                          kind kv: options.txt "key:value"; json: "key": value, searched from "section": { (- = from the
-#                          top); toml: key = value inside [section]. The value is written as it stands here. Each key and
+#                          top); toml: key = value inside [section] (- = above the first section). The value is written as it stands here. Each key and
 #                          value was checked against the mod's own config class (javap, 2026-10-21).
 
 mod|iris|Iris (shaders)
@@ -128,3 +128,11 @@ set|config/entity_texture_features.json|json|-|enableBlinking|false
 set|config/entity_texture_features.json|json|-|skinFeaturesEnabled|false
 set|config/entity_texture_features.json|json|-|use3DSkinLayerPatch|false
 set|config/entity_texture_features.json|json|-|enableFullBodyWardenTextures|false
+
+# Mods' own switches for what a Spark profile of the render thread showed costly (2026-10-21, spark fVEsORTvXX; each key
+# checked against the code that reads it): Twilight Forest's cloud-block precipitation scan runs every client tick in
+# every dimension (5% of the frame there; 0 turns it off, -1 = the common default), Ars Nouveau's skyweave sky pass, and
+# MFFS's full-screen glitch pass for projector previews (clears and copies a render target every frame).
+set|config/twilightforest-client.toml|toml|-|cloudBlockPrecipitationDistance|0
+set|config/ars_nouveau-client.toml|toml|misc|disable_skyweave|true
+set|config/mffs-client.toml|toml|general|enableProjectorModeGlitch|false

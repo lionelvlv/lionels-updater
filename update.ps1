@@ -744,9 +744,12 @@ function Find-Setting([string]$text, $s) {
     if ($m.Success) { return $m } else { return $null }
   }
   if ($s.Kind -eq 'toml') {
-    $sec = [regex]::Match($text, '(?m)^[ \t]*\[' + [regex]::Escape($s.Section) + '\][ \t]*(?=\r?$)')
-    if (-not $sec.Success) { return $null }
-    $after = $sec.Index + $sec.Length
+    # Section "-": a key at the top of the file, before the first [section].
+    if ($s.Section -eq '-') { $after = 0 } else {
+      $sec = [regex]::Match($text, '(?m)^[ \t]*\[' + [regex]::Escape($s.Section) + '\][ \t]*(?=\r?$)')
+      if (-not $sec.Success) { return $null }
+      $after = $sec.Index + $sec.Length
+    }
     $next = ([regex]'(?m)^[ \t]*\[').Match($text, $after)
     $end = if ($next.Success) { $next.Index } else { $text.Length }
     $m = ([regex]('(?m)^[ \t]*' + [regex]::Escape($s.Key) + '[ \t]*=[ \t]*(.*?)[ \t]*(?=\r?$)')).Match($text, $after)

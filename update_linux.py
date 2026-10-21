@@ -614,12 +614,15 @@ def find_setting(text, kind, sec, key):
             start = m.end()
         return re.compile('"' + re.escape(key) + r'"\s*:\s*("(?:[^"\\]|\\.)*"|[-+\d.eE]+|true|false|null)').search(text, start)
     if kind == 'toml':
-        m = re.search(r'(?m)^[ \t]*\[' + re.escape(sec) + r'\][ \t]*(?=\r?$)', text)
-        if not m:
-            return None
-        nxt = re.compile(r'(?m)^[ \t]*\[').search(text, m.end())
+        after = 0   # section "-": a key at the top of the file, before the first [section]
+        if sec != '-':
+            m = re.search(r'(?m)^[ \t]*\[' + re.escape(sec) + r'\][ \t]*(?=\r?$)', text)
+            if not m:
+                return None
+            after = m.end()
+        nxt = re.compile(r'(?m)^[ \t]*\[').search(text, after)
         end = nxt.start() if nxt else len(text)
-        k = re.compile(r'(?m)^[ \t]*' + re.escape(key) + r'[ \t]*=[ \t]*(.*?)[ \t]*(?=\r?$)').search(text, m.end())
+        k = re.compile(r'(?m)^[ \t]*' + re.escape(key) + r'[ \t]*=[ \t]*(.*?)[ \t]*(?=\r?$)').search(text, after)
         return k if k and k.start() < end else None
     return None
 

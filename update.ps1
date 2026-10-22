@@ -758,6 +758,21 @@ function Find-Setting([string]$text, $s) {
   $null
 }
 function Read-Utf8([string]$path) { [IO.File]::ReadAllText($path, (New-Object System.Text.UTF8Encoding($false))) }
+# A line typed within $seconds, or '' (also when there is no console to read keys from).
+function Read-TimedLine([int]$seconds) {
+  try {
+    $end = (Get-Date).AddSeconds($seconds); $typed = ''
+    while ((Get-Date) -lt $end) {
+      if ([Console]::KeyAvailable) {
+        $k = [Console]::ReadKey($true)
+        if ($k.Key -eq 'Enter') { return $typed }
+        if ($k.Key -eq 'Backspace') { if ($typed) { $typed = $typed.Substring(0, $typed.Length - 1); Write-Host "`b `b" -NoNewline } }
+        else { $typed += $k.KeyChar; Write-Host $k.KeyChar -NoNewline }
+      } else { Start-Sleep -Milliseconds 50 }
+    }
+    return $typed
+  } catch { return '' }
+}
 function Write-Utf8([string]$path, [string]$text) { [IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($false))) }
 # resourcePacks:["a","b"] in options.txt: the match (group 1 = inside the brackets) and its entries.
 function Get-PackList([string]$text) {
@@ -790,14 +805,19 @@ if ($potatoMods.Count -or $potatoSets.Count) {
   }
   $potatoRam = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
   if ($env:LIONEL_UPDATER_RAM_GB) { $potatoRam = [int]$env:LIONEL_UPDATER_RAM_GB }
-  $potato = if (Test-Path -LiteralPath $potatoStatePath) { $was } else { $potatoRam -lt 16 }
-  if (-not $fromGame) {
+  $potatoNew = -not (Test-Path -LiteralPath $potatoStatePath)
+  $potato = if ($potatoNew) { $potatoRam -lt 16 } else { $was }
+  # From the launch check too, but only the first time (2026-10-21, Lionel: "players updating should have the choice to
+  # put on potato mode": most update from the game's start and were never asked). 20 s, then the default, so the game
+  # never waits for an answer; later starts ask nothing, as before.
+  if (-not $fromGame -or $potatoNew) {
     Write-Host "`nPotato mode, for weak PCs: shaders and other visual mods off, the lowest settings (render distance 3,"
     Write-Host "Fast graphics, no particles, no sky, mobs and blocks drawn only close by), smaller textures, 8 GB."
     Write-Host "You still join the server as normal. Switching it off later puts your own settings back."
     Write-Host "This PC has $potatoRam GB of RAM. Potato mode is $(if ($potato) { 'ON' } else { 'OFF' })."
+    if ($fromGame) { Write-Host '  (Asked once. In 20 seconds the game starts with this as it is. Change it any time by running the updater.)' }
     Write-Host '  Press Enter to keep it, or type Y (on) or N (off) and press Enter: ' -NoNewline
-    $answer = if ($env:LIONEL_UPDATER_POTATO) { $env:LIONEL_UPDATER_POTATO } else { [Console]::ReadLine() }
+    $answer = if ($env:LIONEL_UPDATER_POTATO) { $env:LIONEL_UPDATER_POTATO } elseif ($fromGame) { Read-TimedLine 20 } else { [Console]::ReadLine() }
     Write-Host ''
     $answer = if ($answer) { $answer.Trim().ToUpper() } else { '' }
     if ($answer -in 'Y', 'YES', 'ON') { $potato = $true }

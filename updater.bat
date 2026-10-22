@@ -75,12 +75,23 @@ echo.
 echo What would you like to do?
 echo   1) Update the ATM10 you already have
 echo   2) Install the whole pack fresh, as a new instance (about 2.6 GB to download)
+echo   3) Potato mode on or off, for weak PCs (also gets the latest update, if there is one)
 set "PICKMODE="
-set /p "PICKMODE=Type 1 or 2 and press Enter (Enter alone: 1), or Q to stop: "
+set /p "PICKMODE=Type 1, 2 or 3 and press Enter (Enter alone: 1), or Q to stop: "
 if /i "%PICKMODE%"=="Q" goto :done
 if "%PICKMODE%"=="2" goto :fresh
 set "LIONEL_UPDATER_MODE=update"
+if "%PICKMODE%"=="3" goto :potato
 goto :update
+
+rem Potato mode (2026-10-21, Lionel: "one of the options be potato mode regardless if they are on the latest update"):
+rem update.ps1 asks it on every run but the launch check's, so this runs the update even when it is the latest one.
+rem With the R2 bucket that downloads nothing new.
+:potato
+echo.
+echo After you pick your ATM10, the updater asks about potato mode: type Y (on) or N (off).
+if defined FILES_URL set "NEED_MB=300"
+goto :space
 
 :fresh
 set "LIONEL_UPDATER_MODE=fresh"
@@ -109,8 +120,9 @@ if errorlevel 1 goto :space
 if defined LIONEL_UPDATER_HOOK goto :hooklatest
 echo You already have the latest update.
 set "AGAIN="
-set /p "AGAIN=Press Enter to close, or type R and press Enter to install it again: "
+set /p "AGAIN=Press Enter to close, type P and press Enter for potato mode on or off, or R to install it again: "
 if /i "%AGAIN%"=="R" goto :space
+if /i "%AGAIN%"=="P" goto :potato
 set "RC=0"
 set "QUIET=1"
 goto :done

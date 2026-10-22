@@ -758,7 +758,7 @@ function Find-Setting([string]$text, $s) {
   $null
 }
 function Read-Utf8([string]$path) { [IO.File]::ReadAllText($path, (New-Object System.Text.UTF8Encoding($false))) }
-# A line typed within $seconds, or '' (also when there is no console to read keys from).
+# A line typed within $seconds ('' for a bare Enter), or $null when nothing was answered (also with no console).
 function Read-TimedLine([int]$seconds) {
   try {
     $end = (Get-Date).AddSeconds($seconds); $typed = ''
@@ -770,8 +770,8 @@ function Read-TimedLine([int]$seconds) {
         else { $typed += $k.KeyChar; Write-Host $k.KeyChar -NoNewline }
       } else { Start-Sleep -Milliseconds 50 }
     }
-    return $typed
-  } catch { return '' }
+    return $null
+  } catch { return $null }
 }
 function Write-Utf8([string]$path, [string]$text) { [IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($false))) }
 # resourcePacks:["a","b"] in options.txt: the match (group 1 = inside the brackets) and its entries.
@@ -790,12 +790,13 @@ if ($potatoMods.Count -or $potatoSets.Count) {
   $potatoStatePath = Join-Path $Target 'lionels-updater-potato.txt'
   # The record: "potato<TAB>on", "mod<TAB>mods/x.jar", "packs<TAB><the list as it was>", "packsnow<TAB><the list potato
   # mode wrote>", "set<TAB>file<TAB>section<TAB>key<TAB>old value<TAB>potato value".
-  $was = $false; $recMods = @(); $recPacks = $null; $recPacksNow = $null; $recSets = @()
+  $was = $false; $asked = $false; $recMods = @(); $recPacks = $null; $recPacksNow = $null; $recSets = @()
   if (Test-Path -LiteralPath $potatoStatePath) {
     foreach ($l in [IO.File]::ReadAllLines($potatoStatePath, (New-Object System.Text.UTF8Encoding($false)))) {
       $f = $l.Split("`t")
       switch ($f[0]) {
         'potato' { $was = ($f[1] -eq 'on') }
+        'asked' { $asked = $true }
         'mod' { $recMods += $f[1] }
         'packs' { $recPacks = $f[1] }
         'packsnow' { $recPacksNow = $f[1] }
@@ -807,17 +808,20 @@ if ($potatoMods.Count -or $potatoSets.Count) {
   if ($env:LIONEL_UPDATER_RAM_GB) { $potatoRam = [int]$env:LIONEL_UPDATER_RAM_GB }
   $potatoNew = -not (Test-Path -LiteralPath $potatoStatePath)
   $potato = if ($potatoNew) { $potatoRam -lt 16 } else { $was }
+  # "asked" in the record: the player has answered once (2026-10-21, Lionel: "at least once, and it remembers their
+  # choice"). Records from before it, written with the silent default, get the question once too.
   # From the launch check too, but only the first time (2026-10-21, Lionel: "players updating should have the choice to
   # put on potato mode": most update from the game's start and were never asked). 20 s, then the default, so the game
   # never waits for an answer; later starts ask nothing, as before.
-  if (-not $fromGame -or $potatoNew) {
+  if (-not $fromGame -or -not $asked) {
     Write-Host "`nPotato mode, for weak PCs: shaders and other visual mods off, the lowest settings (render distance 3,"
     Write-Host "Fast graphics, no particles, no sky, mobs and blocks drawn only close by), smaller textures, 8 GB."
     Write-Host "You still join the server as normal. Switching it off later puts your own settings back."
     Write-Host "This PC has $potatoRam GB of RAM. Potato mode is $(if ($potato) { 'ON' } else { 'OFF' })."
-    if ($fromGame) { Write-Host '  (Asked once. In 20 seconds the game starts with this as it is. Change it any time by running the updater.)' }
+    if ($fromGame) { Write-Host '  (Asked until you answer once. In 20 seconds the game starts with this as it is. Change it any time by running the updater.)' }
     Write-Host '  Press Enter to keep it, or type Y (on) or N (off) and press Enter: ' -NoNewline
     $answer = if ($env:LIONEL_UPDATER_POTATO) { $env:LIONEL_UPDATER_POTATO } elseif ($fromGame) { Read-TimedLine 20 } else { [Console]::ReadLine() }
+    if ($null -ne $answer) { $asked = $true }   # no answer in time: asked again next update
     Write-Host ''
     $answer = if ($answer) { $answer.Trim().ToUpper() } else { '' }
     if ($answer -in 'Y', 'YES', 'ON') { $potato = $true }
@@ -920,7 +924,7 @@ if ($potatoMods.Count -or $potatoSets.Count) {
     foreach ($k in $restored.Keys) { Write-Change '~' "$k`: $($restored[$k]) setting(s) back to yours (potato mode off)" }
     $recMods = @(); $recPacks = $null; $recPacksNow = $null; $recSets = @()
   }
-  $out = @("potato`t$(if ($potato) { 'on' } else { 'off' })") + @($recMods | ForEach-Object { "mod`t$_" })
+  $out = @("potato`t$(if ($potato) { 'on' } else { 'off' })") + @(if ($asked) { "asked`tyes" }) + @($recMods | ForEach-Object { "mod`t$_" })
   if ($null -ne $recPacks) { $out += "packs`t$recPacks"; $out += "packsnow`t$recPacksNow" }
   $out += @($recSets | ForEach-Object { "set`t$($_.File)`t$($_.Section)`t$($_.Key)`t$($_.Old)`t$($_.New)" })
   [IO.File]::WriteAllLines($potatoStatePath, [string[]]$out, (New-Object System.Text.UTF8Encoding($false)))

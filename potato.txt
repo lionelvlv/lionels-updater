@@ -27,6 +27,10 @@ mod|simple_weather|Simple Weather
 mod|darkmodeeverywhere|Dark Mode Everywhere (a shader on every screen)
 mod|optifinecapes|OptiFine Capes (downloads and draws capes)
 mod|resourcify|Resourcify
+# JourneyMap: it was 7.8% of the frame (minimap 5.8%) in a player's Spark profile (XmK2eoFisB, 2026-10-22). Create and
+# MineColonies only use it when present; its network channels are optional (common-networking .optional()), so the
+# server lets players without it in. FTB Chunks' map stays.
+mod|journeymap|JourneyMap (map and minimap; FTB Chunks' map stays)
 
 pack|file/FreshAnimations*|off
 pack|file/HyperPunchy*|off

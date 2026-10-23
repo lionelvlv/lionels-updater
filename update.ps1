@@ -572,7 +572,9 @@ while (-not (Test-Pack $Target)) {
 }
 $Target = $Target.TrimEnd('\')
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
-Set-Content -LiteralPath $savedPath -Value $Target -Encoding UTF8
+# No byte-order mark (2026-10-23): the .bat reads this line with set /p, and PS 5.1's -Encoding UTF8 put three bytes
+# before the path, so the stub never found the pack and never offered 3) Potato mode.
+[IO.File]::WriteAllText($savedPath, $Target + "`r`n", (New-Object System.Text.UTF8Encoding($false)))
 
 # Per-file updates (2026-10-21, Lionel: "is there a way to make the updater more efficient ... if they have to download
 # the whole update.zip everytime"; option 1, Cloudflare R2). publish.ps1 puts every file of the update in a public R2

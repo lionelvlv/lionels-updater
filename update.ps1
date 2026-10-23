@@ -1141,7 +1141,8 @@ if ($optionalMods.Count) {
   }
   # Potato mode (5p): all off for this run, without asking; the player's own choices stay saved for when it is off.
   $ownChoice = @{}; foreach ($k in $on.Keys) { $ownChoice[$k] = $on[$k] }
-  if ($potato) { foreach ($m in $optionalMods) { $on[$m.Id] = $false }; Write-Host "`nOptional mods: all off while potato mode is on." }
+  # Distant Horizons stays on, low-spec with its renderer off (potato.txt; 2026-10-23, Lionel)
+  if ($potato) { foreach ($m in $optionalMods) { $on[$m.Id] = $m.Id -eq 'distanthorizons' }; Write-Host "`nOptional mods: all off while potato mode is on, but Distant Horizons (low-spec, its renderer off until you turn it on)." }
   elseif (-not $fromGame) {
     while ($true) {
       Write-Host "`nOptional mods (only on this PC; the server does not need them):"

@@ -3,7 +3,7 @@
 # The player says yes or no on every run but the launch check's (Enter keeps). On: the lines below are applied and what
 # they replaced is written down in the instance (lionels-updater-potato.txt); off again: all of it goes back. A setting
 # the player changed themselves while in potato mode is left as they set it. The optional mods (optional.txt) are all
-# off while potato mode is on; the player's own choices come back with it off. Memory: 8 GB.
+# off while potato mode is on, except Distant Horizons: on, low-spec, renderer off (rules at the end); the player's own choices come back with it off. Memory: 8 GB.
 #
 # mod|<mod id>|<name>      every jar declaring that mod id is renamed .jar.disabled. Only mods the server does not have
 #                          and that nothing else needs. NOT here, on purpose: Entity Model/Texture/Sound Features
@@ -152,3 +152,24 @@ set|config/supplementaries-client.toml|toml|tweaks|projectile_weapon_overlay|fal
 set|config/supplementaries-client.toml|toml|items.slingshot|overlay|false
 set|config/supplementaries-client.toml|toml|items.lunch_basket|overlay|false
 set|config/supplementaries-client.toml|toml|items.quiver|overlay|false
+
+# Distant Horizons (2026-10-23, Lionel: "add DH back to potato mode, but with the low-spec settings. default off for
+# rendering"): installed in potato mode (the other optional mods stay off), its renderer DISABLED until the player turns
+# it on (DH's button beside the FOV slider: Advanced, Debugging, Renderer Mode), and every setting at its cheapest so it
+# costs little when on. Each value from DH 3.3.3's enums (javap). DH writes this file on its first start; until then
+# lionel-turbo keeps the renderer off for that one session.
+set|config/DistantHorizons.toml|toml|client.advanced.debugging|rendererMode|"DISABLED"
+set|config/DistantHorizons.toml|toml|client.advanced.graphics|enableAntiAliasing|false
+set|config/DistantHorizons.toml|toml|client.advanced.graphics.quality|lodChunkRenderDistanceRadius|16
+set|config/DistantHorizons.toml|toml|client.advanced.graphics.quality|horizontalQuality|"LOWEST"
+set|config/DistantHorizons.toml|toml|client.advanced.graphics.quality|maxHorizontalResolution|"FOUR_BLOCKS"
+set|config/DistantHorizons.toml|toml|client.advanced.graphics.quality|verticalQuality|"HEIGHT_MAP"
+set|config/DistantHorizons.toml|toml|client.advanced.graphics.quality|transparency|"DISABLED"
+set|config/DistantHorizons.toml|toml|client.advanced.graphics.quality|vanillaFadeMode|"NONE"
+set|config/DistantHorizons.toml|toml|client.advanced.graphics.quality|ditherDhFade|false
+set|config/DistantHorizons.toml|toml|client.advanced.graphics.quality|lodBiomeBlending|0
+set|config/DistantHorizons.toml|toml|client.advanced.graphics.genericRendering|enableCloudRendering|false
+set|config/DistantHorizons.toml|toml|client.advanced.graphics.texture|enableTexturedLods|false
+set|config/DistantHorizons.toml|toml|client.advanced.graphics.noiseTexture|enableNoiseTexture|false
+set|config/DistantHorizons.toml|toml|common.worldGenerator|generatorPlan|"SURFACE_ONLY"
+set|config/DistantHorizons.toml|toml|common.multiThreading|numberOfThreads|2

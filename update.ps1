@@ -169,6 +169,12 @@ function Find-LauncherExe {
   $dirs = if ($Launcher -eq 'Modrinth') { "$env:LOCALAPPDATA\Modrinth App", "$env:ProgramFiles\Modrinth App" }
           else { "$env:APPDATA\ATLauncher", "$env:LOCALAPPDATA\Programs\ATLauncher", "$env:USERPROFILE\ATLauncher",
                  "$env:USERPROFILE\Documents\ATLauncher", "$env:USERPROFILE\Desktop\ATLauncher", "$env:USERPROFILE\Downloads\ATLauncher" }
+  # Also a Games folder on any local drive, as Find-Packs looks (2026-10-22: Lionel's D:\Games\ATLauncher; its Uninstall
+  # entry still named an old AppData folder, so the fresh install had nowhere to write the instance)
+  foreach ($di in [IO.DriveInfo]::GetDrives()) {
+    if ($di.DriveType -ne 'Fixed') { continue }
+    $dirs += if ($Launcher -eq 'Modrinth') { "$($di.Name)Games\Modrinth App", "$($di.Name)Modrinth App" } else { "$($di.Name)Games\ATLauncher", "$($di.Name)ATLauncher" }
+  }
   foreach ($d in $dirs) { if ([IO.File]::Exists("$d\$exeName")) { return "$d\$exeName" } }
   $match = if ($Launcher -eq 'Modrinth') { '^Modrinth App' } else { '^ATLauncher' }
   foreach ($key in 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
@@ -186,6 +192,10 @@ function Find-LauncherExe {
 function Test-LauncherRunning {
   $proc = if ($Launcher -eq 'Modrinth') { 'Modrinth App' } else { 'ATLauncher' }
   [bool](Get-Process -Name $proc -ErrorAction SilentlyContinue)
+}
+function Test-ATLauncherOpen {
+  if ($env:LIONEL_UPDATER_ATL_OPEN) { return $env:LIONEL_UPDATER_ATL_OPEN -eq '1' }   # test.ps1
+  [bool](Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and ($_.Path -match '\\ATLauncher\.exe$' -or $_.Path -match '\\ATLauncher\\jre\\') })
 }
 
 # Starts the launcher unless it is already open. LIONEL_UPDATER_NO_START (test.ps1): starts nothing.
@@ -252,6 +262,11 @@ function Install-Launcher {
 function Show-SignIn([string]$exe) {
   Start-Launcher $exe
   Write-Host "`nSign in to Minecraft in $Launcher first (it is open, or opening):" -ForegroundColor Cyan
+  Write-SignInSteps
+  Write-Host "`nPress Enter here when you are signed in (or Q to stop): " -NoNewline
+  if ((Clean-Path ([Console]::ReadLine())) -ieq 'Q') { Fail 'Stopped. Nothing was changed.' }
+}
+function Write-SignInSteps {
   if ($Launcher -eq 'ATLauncher') {
     Write-Host '  1. Click the "Accounts" tab on the right.'
     Write-Host '  2. Click "Login with Microsoft". A page opens in your web browser.'
@@ -264,8 +279,6 @@ function Show-SignIn([string]$exe) {
     Write-Host '  A Modrinth account is something else: your Minecraft sign-in is not it, and Lionel''s pack does not need one.'
     Write-Host '  If the app offers to make or sign in to a Modrinth account, you can skip it.'
   }
-  Write-Host "`nPress Enter here when you are signed in (or Q to stop): " -NoNewline
-  if ((Clean-Path ([Console]::ReadLine())) -ieq 'Q') { Fail 'Stopped. Nothing was changed.' }
 }
 
 $launcherExe = if ($fromGame) { 'running' } else { Find-LauncherExe }   # the launcher started the check
@@ -301,8 +314,104 @@ while ($Mode -notin 'update', 'fresh') {
   else { Write-Host "'$answer' is not 1 or 2." -ForegroundColor Yellow }
 }
 
-# A fresh install: the whole pack is downloaded, the player imports it into the launcher (neither launcher can be told
-# to from outside), and the instance that appears is then updated and set up like any other.
+# The potato mode question (5p). Returns on ($true) or off ($false); $null when no answer came (end of input, or the
+# launch check's 20 s ran out). Enter keeps $current.
+function Ask-Potato([bool]$current, [int]$ram) {
+  Write-Host "`nPotato mode, for weak PCs: shaders and other visual mods off, the lowest settings (render distance 3,"
+  Write-Host "Fast graphics, no particles, no sky, mobs and blocks drawn only close by), smaller textures, 8 GB."
+  Write-Host "You still join the server as normal. Switching it off later puts your own settings back."
+  Write-Host "This PC has $ram GB of RAM. Potato mode is $(if ($current) { 'ON' } else { 'OFF' })."
+  if ($fromGame) { Write-Host '  (Asked until you answer once. In 20 seconds the game starts with this as it is. Change it any time by running the updater.)' }
+  Write-Host '  Press Enter to keep it, or type Y (on) or N (off) and press Enter: ' -NoNewline
+  $answer = if ($env:LIONEL_UPDATER_POTATO) { $env:LIONEL_UPDATER_POTATO } elseif ($fromGame) { Read-TimedLine 20 } else { [Console]::ReadLine() }
+  Write-Host ''
+  if ($null -eq $answer) { return $null }
+  $answer = $answer.Trim().ToUpper()
+  if ($answer -in 'Y', 'YES', 'ON') { return $true }
+  if ($answer -in 'N', 'NO', 'OFF') { return $false }
+  if ($answer) { Write-Host "  '$answer' is not Y or N: potato mode stays $(if ($current) { 'on' } else { 'off' })." -ForegroundColor Yellow }
+  $current
+}
+function Get-RamGb {
+  if ($env:LIONEL_UPDATER_RAM_GB) { return [int]$env:LIONEL_UPDATER_RAM_GB }
+  [int][math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
+}
+# A fresh install asks it before the long download (2026-10-22, Lionel: "or if the user wants it as an option when
+# installing fresh"), so the rest runs without questions; 5p takes this answer. Only when potato.txt has rules.
+$potatoEarly = $null
+if ($Mode -eq 'fresh' -and @(Get-Content -LiteralPath "$src\potato.txt" -ErrorAction SilentlyContinue | Where-Object { $_.Trim() -and $_ -notmatch '^\s*#' }).Count) {
+  $ram = Get-RamGb
+  $potatoEarly = Ask-Potato ($ram -lt 16) $ram
+}
+
+# ATLauncher, the import done for the player (2026-10-22, Lionel: "is there no way to have the updater import on our
+# behalf?"). ATLauncher cannot be told to import from outside, but an instance is only a folder in its instances\ with
+# an instance.json, and at the first Play it downloads Minecraft, NeoForge and the libraries itself. The pack's files
+# are unpacked there and atlauncher-instance.json (make_atl_template.py: the instance.json of one real import) written
+# beside them. Returns the new folder, or '' when it cannot (no template, another Minecraft or NeoForge version than the
+# template's, a pack with download links, ATLauncher left open): then the player imports it as before.
+function Install-AtlInstance([string]$packFile) {
+  $template = Join-Path $src 'atlauncher-instance.json'
+  if (-not (Test-Path -LiteralPath $template) -or (Get-Item -LiteralPath $template).Length -lt 1000 -or -not $launcherExe -or -not (Test-Path -LiteralPath $launcherExe)) { return '' }
+  $json = [IO.File]::ReadAllText($template)
+  $t = $json | ConvertFrom-Json
+  $zip = [IO.Compression.ZipFile]::OpenRead($packFile)
+  try {
+    # (names may start with ./, as test.ps1's packs made by tar do)
+    $entry = @($zip.Entries | Where-Object { ($_.FullName -replace '^\./', '') -eq 'modrinth.index.json' })[0]
+    if (-not $entry) { return '' }
+    $r = New-Object IO.StreamReader($entry.Open()); $index = $r.ReadToEnd() | ConvertFrom-Json; $r.Close()
+    if (@($index.files).Count -or $index.dependencies.minecraft -ne $t.id -or $index.dependencies.neoforge -ne $t.launcher.loaderVersion.version) {
+      Write-Host "`n(This pack is for another Minecraft or NeoForge version than the updater knows, so ATLauncher imports it.)" -ForegroundColor Yellow
+      return ''
+    }
+    # ATLauncher reads its instances when it starts and keeps them in memory: closed, it sees the new one next start.
+    for ($try = 0; (Test-ATLauncherOpen) -and $try -lt 3; $try++) {
+      Write-Host "`nATLauncher is open. Close it completely (its window, and its icon by the clock if there is one), then press Enter" -ForegroundColor Yellow
+      Write-Host '  here: the updater puts the pack in it as a new instance, and opens it again at the end. ' -NoNewline
+      if ($null -eq [Console]::ReadLine()) { break }
+    }
+    if (Test-ATLauncherOpen) { Write-Host "`nATLauncher stayed open, so the pack is imported by hand instead." -ForegroundColor Yellow; return '' }
+    $instances = Join-Path (Split-Path -Parent $launcherExe) 'instances'
+    $n = 1
+    do {
+      $folder = 'LionelsATM10' + $(if ($n -gt 1) { "-$n" })
+      $name = "Lionel's ATM10" + $(if ($n -gt 1) { " ($n)" })
+      $n++
+    } while (Test-Path -LiteralPath (Join-Path $instances $folder))
+    $dest = Join-Path $instances $folder
+    Write-Section "Installing into ATLauncher as `"$name`""
+    # overrides\ first, then client-overrides\ over it (the Modrinth pack format)
+    $files = @($zip.Entries | Where-Object { $_.Name -and $_.FullName -match '^(\./)?(client-)?overrides/' } | Sort-Object { $_.FullName -match '^(\./)?client-' })
+    $total = [double](($files | Measure-Object -Property Length -Sum).Sum) + 1
+    $done = 0
+    try {
+      foreach ($e in $files) {
+        $rel = $e.FullName -replace '^(\./)?(client-)?overrides/', ''
+        if ($rel -match '(^|/)\.\.(/|$)' -or $rel -match '^/' -or $rel -match ':') { throw "Unsafe path in the pack: $($e.FullName)" }
+        $to = Join-Path $dest $rel.Replace('/', '\')
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+        [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $to, $true)
+        $done += $e.Length
+        Show-LookBar 'Unpacking' ($done / $total) ('{0:N0} of {1:N0} MB' -f ($done / 1MB), ($total / 1MB))
+      }
+      Clear-LookLine
+      $json = $json.Replace('__UUID__', [guid]::NewGuid().ToString()).Replace('__NAME__', $name.Replace('\', '\\').Replace('"', '\"'))
+      [IO.File]::WriteAllText((Join-Path $dest 'instance.json'), $json, (New-Object Text.UTF8Encoding($false)))
+    } catch {
+      Clear-LookLine
+      Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction SilentlyContinue
+      Fail "The pack could not be put into ATLauncher: $($_.Exception.Message)`nNothing was left behind. Check your free space and try again."
+    }
+    Write-Host "  $($files.Count) files into $dest"
+    $script:atlMade = $name
+    $dest
+  } finally { $zip.Dispose() }
+}
+
+# A fresh install: the whole pack is downloaded and goes into the launcher as a new instance: written by the updater
+# itself for ATLauncher (Install-AtlInstance), handed to the Modrinth app to import, or imported by the player as a
+# last resort. The instance is then updated and set up like any other.
 function Install-Fresh {
   if (-not $fullPackUrl) { Fail 'A fresh install is not available yet: Lionel has not uploaded the whole pack. Ask him. Nothing was changed.' }
   $work = Split-Path -Parent $src
@@ -313,16 +422,31 @@ function Install-Fresh {
   $ok = (Invoke-Download $fullPackUrl $packFile 'The whole pack') -and (Test-Path -LiteralPath $packFile)
   if ($ok) { $head = New-Object byte[] 2; $fs = [IO.File]::OpenRead($packFile); [void]$fs.Read($head, 0, 2); $fs.Close(); $ok = $head[0] -eq 0x50 -and $head[1] -eq 0x4B }
   if (-not $ok) { Fail 'The pack could not be downloaded. Check your internet connection and free space, and try again. Nothing was changed.' }
+  Write-Host "`nDownloaded."
+  if ($Launcher -eq 'ATLauncher') {
+    $made = Install-AtlInstance $packFile
+    if ($made) { return $made }
+  }
   $before = @{}
   foreach ($p in (Find-LauncherPacks)) { $before[$p[0].ToLowerInvariant()] = $true }
-  Write-Host "`nDownloaded."
   Show-SignIn $launcherExe
-  Write-Host "`nNow import it into $Launcher (the file's path is copied: you only paste it):" -ForegroundColor Cyan
+  # The Modrinth app imports a pack file it is started with ("Open with Modrinth App"), also when it is already open.
+  $handed = $false
+  if ($Launcher -eq 'Modrinth' -and -not $env:LIONEL_UPDATER_NO_START -and $launcherExe) {
+    try { Start-Process -FilePath $launcherExe -ArgumentList "`"$packFile`""; $handed = $true } catch { }
+  }
+  if ($handed) {
+    Write-Host "`nThe Modrinth app is opening the pack. If it asks, click Install, then wait until it has finished installing" -ForegroundColor Cyan
+    Write-Host '  (a few minutes). If nothing shows up there, import it yourself:'
+  } else {
+    Write-Host "`nNow import it into $Launcher (the file's path is copied: you only paste it):" -ForegroundColor Cyan
+  }
   if ($Launcher -eq 'ATLauncher') {
-    Write-Host '  1. Open ATLauncher.'
-    Write-Host '  2. Go to its "Import" tab and click "Browse".'
-    Write-Host '  3. Click in the "File name" box, press Ctrl+V, press Enter, then click "Import".'
-    Write-Host '  4. Wait until ATLauncher has finished installing it (it downloads Minecraft and NeoForge too: a few minutes).'
+    # The box above Browse takes a pasted path (ATLauncher's ImportInstanceDialog opens it as a file), so its slow file
+    # window is never needed (2026-10-22, Lionel: "too many folders, UI lags").
+    Write-Host '  1. Open ATLauncher, go to its "Instances" tab and click "Import" at the top.'
+    Write-Host '  2. Click in the box at the top (not "Browse"), press Ctrl+V, then click "Import".'
+    Write-Host '  3. Wait until ATLauncher has finished installing it (it downloads Minecraft and NeoForge too: a few minutes).'
   } else {
     Write-Host '  1. Open the Modrinth app.'
     Write-Host '  2. Click the + (Create new instance) on the left, then "From file".'
@@ -804,8 +928,7 @@ if ($potatoMods.Count -or $potatoSets.Count) {
       }
     }
   }
-  $potatoRam = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
-  if ($env:LIONEL_UPDATER_RAM_GB) { $potatoRam = [int]$env:LIONEL_UPDATER_RAM_GB }
+  $potatoRam = Get-RamGb
   $potatoNew = -not (Test-Path -LiteralPath $potatoStatePath)
   $potato = if ($potatoNew) { $potatoRam -lt 16 } else { $was }
   # "asked" in the record: the player has answered once (2026-10-21, Lionel: "at least once, and it remembers their
@@ -813,20 +936,10 @@ if ($potatoMods.Count -or $potatoSets.Count) {
   # From the launch check too, but only the first time (2026-10-21, Lionel: "players updating should have the choice to
   # put on potato mode": most update from the game's start and were never asked). 20 s, then the default, so the game
   # never waits for an answer; later starts ask nothing, as before.
-  if (-not $fromGame -or -not $asked) {
-    Write-Host "`nPotato mode, for weak PCs: shaders and other visual mods off, the lowest settings (render distance 3,"
-    Write-Host "Fast graphics, no particles, no sky, mobs and blocks drawn only close by), smaller textures, 8 GB."
-    Write-Host "You still join the server as normal. Switching it off later puts your own settings back."
-    Write-Host "This PC has $potatoRam GB of RAM. Potato mode is $(if ($potato) { 'ON' } else { 'OFF' })."
-    if ($fromGame) { Write-Host '  (Asked until you answer once. In 20 seconds the game starts with this as it is. Change it any time by running the updater.)' }
-    Write-Host '  Press Enter to keep it, or type Y (on) or N (off) and press Enter: ' -NoNewline
-    $answer = if ($env:LIONEL_UPDATER_POTATO) { $env:LIONEL_UPDATER_POTATO } elseif ($fromGame) { Read-TimedLine 20 } else { [Console]::ReadLine() }
-    if ($null -ne $answer) { $asked = $true }   # no answer in time: asked again next update
-    Write-Host ''
-    $answer = if ($answer) { $answer.Trim().ToUpper() } else { '' }
-    if ($answer -in 'Y', 'YES', 'ON') { $potato = $true }
-    elseif ($answer -in 'N', 'NO', 'OFF') { $potato = $false }
-    elseif ($answer) { Write-Host "  '$answer' is not Y or N: potato mode stays $(if ($potato) { 'on' } else { 'off' })." -ForegroundColor Yellow }
+  if ($null -ne $potatoEarly) { $potato = $potatoEarly; $asked = $true }   # a fresh install asked before its download
+  elseif (-not $fromGame -or -not $asked) {
+    $answer = Ask-Potato $potato $potatoRam
+    if ($null -ne $answer) { $potato = $answer; $asked = $true }   # no answer in time: asked again next update
   }
   $modsDir = Join-Path $Target 'mods'
   $optionsPath = Join-Path $Target 'options.txt'
@@ -928,6 +1041,9 @@ if ($potatoMods.Count -or $potatoSets.Count) {
   if ($null -ne $recPacks) { $out += "packs`t$recPacks"; $out += "packsnow`t$recPacksNow" }
   $out += @($recSets | ForEach-Object { "set`t$($_.File)`t$($_.Section)`t$($_.Key)`t$($_.Old)`t$($_.New)" })
   [IO.File]::WriteAllLines($potatoStatePath, [string[]]$out, (New-Object System.Text.UTF8Encoding($false)))
+  # For the .bat (2026-10-22): a player on the latest update who never answered is sent here instead of being told
+  # there is nothing to do.
+  if ($asked) { Set-Content -LiteralPath (Join-Path $stateDir 'potato-decided.txt') -Value $(if ($potato) { 'on' } else { 'off' }) -Encoding ASCII }
   if ($potato) { Write-Host '  Potato mode is on.' } elseif ($was) { Write-Host '  Potato mode is off: everything it changed is back.' }
 }
 
@@ -1477,11 +1593,6 @@ function Set-JsonKey([string]$json, [string]$key, [string]$value) {
   if (-not $at.Success) { throw 'instance.json has no "launcher" section' }
   $json.Insert($at.Index + $at.Length, "`n    `"$key`": $value,")
 }
-function Test-ATLauncherOpen {
-  if ($env:LIONEL_UPDATER_ATL_OPEN) { return $env:LIONEL_UPDATER_ATL_OPEN -eq '1' }   # test.ps1
-  [bool](Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and ($_.Path -match '\\ATLauncher\.exe$' -or $_.Path -match '\\ATLauncher\\jre\\') })
-}
-
 $setupDone = $false
 if ($Launcher -eq 'ATLauncher') {
   $atlJson = Join-Path $Target 'instance.json'
@@ -1569,7 +1680,14 @@ Write-Host "`nDone. Added $added, updated $updated, removed $removed, already up
 Show-Toast 'Advancement Made!' $(if ($Mode -eq 'fresh') { "Lionel's ATM10, installed ($label)" } else { "Up to date: update $label" })
 if ($fromGame) { Write-Host "`nThe game starts now." -ForegroundColor Cyan; exit 0 }
 $instanceName = Split-Path -Leaf $(if ((Split-Path -Leaf $Target) -match '^\.?minecraft$') { Split-Path -Parent $Target } else { $Target })
+if ($atlMade) { $instanceName = $atlMade }
 Write-Host "`nWhat to do now:" -ForegroundColor Cyan
+if ($atlMade) {
+  # The instance was written with ATLauncher closed, so the sign-in comes now (Install-AtlInstance).
+  Start-Launcher $launcherExe
+  Write-Host "  0. ATLauncher is opening. If you have not signed in to Minecraft in it yet:"
+  Write-SignInSteps
+}
 if ($Launcher -eq 'ATLauncher') {
   Write-Host "  1. Open ATLauncher, go to the Instances tab, and click Play on `"$instanceName`"."
   if (-not $setupDone) { Write-Host '     First set its speed settings (ATLauncher was open): see LAUNCH-ARGUMENTS.txt in the ATM10 folder.' }

@@ -71,17 +71,22 @@ rem Update or fresh install, asked before anything big is downloaded (2026-10-16
 rem whole pack, and the update only if the pack is older than it (update.ps1 decides). LIONEL_UPDATER_MODE answers it.
 if /i "%LIONEL_UPDATER_MODE%"=="fresh" goto :fresh
 if /i "%LIONEL_UPDATER_MODE%"=="update" goto :update
+rem Potato mode is offered only with an ATM10 to put it on (2026-10-22): the folder the updater used last time.
+set "HASPACK="
+if exist "%STATE%\path.txt" set /p HASPACK=<"%STATE%\path.txt"
+if defined HASPACK if not exist "%HASPACK%\mods\" set "HASPACK="
 echo.
 echo What would you like to do?
 echo   1) Update the ATM10 you already have
 echo   2) Install the whole pack fresh, as a new instance (about 2.6 GB to download)
-echo   3) Potato mode on or off, for weak PCs (also gets the latest update, if there is one)
+if defined HASPACK echo   3) Potato mode on or off, for weak PCs (also gets the latest update, if there is one)
 set "PICKMODE="
-set /p "PICKMODE=Type 1, 2 or 3 and press Enter (Enter alone: 1), or Q to stop: "
+if defined HASPACK set /p "PICKMODE=Type 1, 2 or 3 and press Enter (Enter alone: 1), or Q to stop: "
+if not defined HASPACK set /p "PICKMODE=Type 1 or 2 and press Enter (Enter alone: 1), or Q to stop: "
 if /i "%PICKMODE%"=="Q" goto :done
 if "%PICKMODE%"=="2" goto :fresh
 set "LIONEL_UPDATER_MODE=update"
-if "%PICKMODE%"=="3" goto :potato
+if defined HASPACK if "%PICKMODE%"=="3" goto :potato
 goto :update
 
 rem Potato mode (2026-10-21, Lionel: "one of the options be potato mode regardless if they are on the latest update"):
@@ -118,6 +123,12 @@ if errorlevel 1 goto :space
 fc /b "%LATEST%" "%HAVE%" >nul 2>&1
 if errorlevel 1 goto :space
 if defined LIONEL_UPDATER_HOOK goto :hooklatest
+rem Never answered the potato mode question (new on 2026-10-21; update.ps1 writes this file once it is answered): that
+rem first, instead of "nothing to do" (2026-10-22, Lionel: "when updating and they haven't made a decision").
+if not exist "%STATE%\potato-decided.txt" (
+  echo You already have the latest update. One new question first: potato mode, for weak PCs.
+  goto :potato
+)
 echo You already have the latest update.
 set "AGAIN="
 set /p "AGAIN=Press Enter to close, type P and press Enter for potato mode on or off, or R to install it again: "
@@ -189,6 +200,7 @@ ren "%WORK%\update.zip.part" update.zip
 set "ZIP=%WORK%\update.zip"
 
 :unpack
+echo Unpacking the update (up to a minute)...
 "%SystemRoot%\System32\tar.exe" -xf "%ZIP%" -C "%WORK%\files" 2>nul
 if errorlevel 1 goto :baddownload
 if not exist "%WORK%\files\update.ps1" goto :baddownload
@@ -198,6 +210,8 @@ rem A fresh install: only the updater's own small files, from the GitHub copy pu
 rem itself is fetched by update.ps1 if the whole pack turns out older than it.
 :logic
 echo Getting the updater...
+rem Not required: without the ATLauncher template update.ps1 has the pack imported by hand.
+"%SystemRoot%\System32\curl.exe" -L --fail -s -o "%WORK%\files\atlauncher-instance.json" "%LOGIC_URL%/atlauncher-instance.json"
 for %%F in (update.ps1 look.ps1 delete.txt optional.txt potato.txt java/resolver-patch.jar java/lionel-check.jar guide/modrinth-java-and-memory.png guide/modrinth-launch-hooks.png) do (
   "%SystemRoot%\System32\curl.exe" -L --fail -s --create-dirs -o "%WORK%\files\%%F" "%LOGIC_URL%/%%F"
   if errorlevel 1 goto :baddownload

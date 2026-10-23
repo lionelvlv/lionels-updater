@@ -142,3 +142,10 @@ set|config/entity_texture_features.json|json|-|enableFullBodyWardenTextures|fals
 set|config/twilightforest-client.toml|toml|-|cloudBlockPrecipitationDistance|0
 set|config/ars_nouveau-client.toml|toml|misc|disable_skyweave|true
 set|config/mffs-client.toml|toml|general|enableProjectorModeGlitch|false
+
+# Supplementaries' item overlays (2026-10-22, spark 4PS84hsyMz, Lionel's potato instance: 0.9% of every frame): the
+# selected arrow, food or ammo drawn over quivers, lunch baskets, slingshots and projectile weapons in every slot.
+set|config/supplementaries-client.toml|toml|tweaks|projectile_weapon_overlay|false
+set|config/supplementaries-client.toml|toml|items.slingshot|overlay|false
+set|config/supplementaries-client.toml|toml|items.lunch_basket|overlay|false
+set|config/supplementaries-client.toml|toml|items.quiver|overlay|false

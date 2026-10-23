@@ -31,6 +31,9 @@ mod|resourcify|Resourcify
 # MineColonies only use it when present; its network channels are optional (common-networking .optional()), so the
 # server lets players without it in. FTB Chunks' map stays.
 mod|journeymap|JourneyMap (map and minimap; FTB Chunks' map stays)
+# NOT Jade (tried 2026-10-22): the server's Jade sends jade:server_ping_v1 to every player on joining without checking
+# the client has it, and NeoForge refuses: "Couldn't place player in world", the join fails. Its channel being optional
+# only covers the handshake. Jade's tooltip is hidden inside the Lost City instead (lionel-turbo lostCityPotato).
 
 pack|file/FreshAnimations*|off
 pack|file/HyperPunchy*|off

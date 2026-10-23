@@ -1367,6 +1367,17 @@ Edit-Once 'config\immediatelyfast.json' @(
 Edit-Once 'config\almostunified\placeholders.json' @(
   , @('(?m)^([ \t]*)"tin",(?=\r?\n)(?![\s\S]*"titanium")', "`"tin`",`n    `"titanium`",")
 ) 'Almost Unified merges the two titaniums (one line)'
+# 11i. Frame rate in the Lost City (2026-10-22, spark U5YedLQBz5, Lionel: "performance is unbearable. down to make
+#      serious compromises in the main pack too"): Spore's scent clouds keep spawning blood particles, each checking
+#      block collisions every tick for 5 s: about 10% of the frame. Spore's own switch turns the scent particles off.
+Edit-Once 'config\spore-startup.toml' @(
+  , @('(?m)^([ \t]*"Should Scents have particles\?" = )true(?=\r?$)', 'false')
+) 'Spore''s scent clouds no longer spawn particles (about a tenth of the frame in the Lost City; one line)'
+# 11j. Ars Nouveau's skyweave pass draws the sky a second time for its sky-textured blocks: 1.3% of the frame in the
+#      same profile, with none of those blocks in view. Off, they show their plain texture.
+Edit-Once 'config\ars_nouveau-client.toml' @(
+  , @('(?m)^([ \t]*disable_skyweave = )false(?=\r?$)', 'true')
+) 'Ars Nouveau''s skyweave sky pass is off (it drew the sky twice; one line)'
 # 11c. lionel-turbo reads a missing switch as off, and config\lionel-turbo.properties is if-missing, so a player who
 #      already has the file would never get a switch added later (2026-10-09: megaCellsCompressionIndex,
 #      punchyMappedBonesOnly). Each switch of the shipped file that the player's file does not mention at all is

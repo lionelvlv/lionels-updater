@@ -193,9 +193,46 @@ function Test-LauncherRunning {
   $proc = if ($Launcher -eq 'Modrinth') { 'Modrinth App' } else { 'ATLauncher' }
   [bool](Get-Process -Name $proc -ErrorAction SilentlyContinue)
 }
+function Get-ATLauncherProcesses {
+  @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and ($_.Path -match '\\ATLauncher\.exe$' -or $_.Path -match '\\ATLauncher\\jre\\') })
+}
 function Test-ATLauncherOpen {
-  if ($env:LIONEL_UPDATER_ATL_OPEN) { return $env:LIONEL_UPDATER_ATL_OPEN -eq '1' }   # test.ps1
-  [bool](Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and ($_.Path -match '\\ATLauncher\.exe$' -or $_.Path -match '\\ATLauncher\\jre\\') })
+  # test.ps1: 1 open, 0 closed, closable = open until Close-ATLauncher closes it
+  if ($env:LIONEL_UPDATER_ATL_OPEN -eq 'closable') { return -not $script:atlTestClosed }
+  if ($env:LIONEL_UPDATER_ATL_OPEN) { return $env:LIONEL_UPDATER_ATL_OPEN -eq '1' }
+  [bool](Get-ATLauncherProcesses)
+}
+# ATLauncher closed by the updater where it must be (2026-10-22, Lionel: "see if you can close atlauncher automatically
+# ... to do the instance settings and relaunch it yourself"): asked to close as its X button does (it saves its own
+# settings as it goes), and started again at the end ($atlReopen). Not while a game runs: ATLauncher may be waiting on
+# it. Did not close in 15 s (busy, or only in the tray): Enter ends it. Returns whether it is closed.
+$atlReopen = $false
+function Close-ATLauncher {
+  if (-not (Test-ATLauncherOpen)) { return $true }
+  if ($env:LIONEL_UPDATER_ATL_OPEN -eq 'closable') { $script:atlTestClosed = $true; $script:atlReopen = $true; Write-Host "`nATLauncher closed: it opens again when the updater is done."; return $true }
+  if ($env:LIONEL_UPDATER_ATL_OPEN) { return $false }   # test.ps1 '1': one that cannot be closed
+  if (@(Get-CimInstance Win32_Process -Filter "Name='javaw.exe' OR Name='java.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match 'BootstrapLauncher|net\.minecraft\.client\.main' }).Count) { return $false }
+  $procs = Get-ATLauncherProcesses
+  # Its exe, to start it again when it was not found by Find-LauncherExe: ATLauncher.exe, or the one beside its jre\
+  if (-not $script:launcherExe -or -not (Test-Path -LiteralPath $script:launcherExe)) {
+    foreach ($p in $procs) {
+      $exe = if ($p.Path -match '\\ATLauncher\.exe$') { $p.Path } else { Join-Path ($p.Path -replace '\\jre\\.*$', '') 'ATLauncher.exe' }
+      if (Test-Path -LiteralPath $exe) { $script:launcherExe = $exe; break }
+    }
+  }
+  Write-Host "`nClosing ATLauncher: it opens again when the updater is done..."
+  foreach ($p in $procs) { try { [void]$p.CloseMainWindow() } catch { } }
+  for ($i = 0; $i -lt 30 -and (Test-ATLauncherOpen); $i++) { Start-Sleep -Milliseconds 500 }
+  if (Test-ATLauncherOpen) {
+    Write-Host '  ATLauncher did not close by itself (it may be busy, or only in the tray by the clock).' -ForegroundColor Yellow
+    Write-Host '  Press Enter to end it now (or close it yourself first, then press Enter): ' -NoNewline
+    if ($null -eq [Console]::ReadLine()) { return $false }
+    foreach ($p in (Get-ATLauncherProcesses)) { try { $p.Kill() } catch { } }
+    for ($i = 0; $i -lt 10 -and (Test-ATLauncherOpen); $i++) { Start-Sleep -Milliseconds 500 }
+  }
+  if (Test-ATLauncherOpen) { return $false }
+  $script:atlReopen = $true
+  $true
 }
 
 # Starts the launcher unless it is already open. LIONEL_UPDATER_NO_START (test.ps1): starts nothing.
@@ -366,6 +403,8 @@ function Install-AtlInstance([string]$packFile) {
       return ''
     }
     # ATLauncher reads its instances when it starts and keeps them in memory: closed, it sees the new one next start.
+    # Closed by the updater; asked of the player only when it could not (a game running).
+    [void](Close-ATLauncher)
     for ($try = 0; (Test-ATLauncherOpen) -and $try -lt 3; $try++) {
       Write-Host "`nATLauncher is open. Close it completely (its window, and its icon by the clock if there is one), then press Enter" -ForegroundColor Yellow
       Write-Host '  here: the updater puts the pack in it as a new instance, and opens it again at the end. ' -NoNewline
@@ -979,6 +1018,25 @@ if ($potatoMods.Count -or $potatoSets.Count) {
     }
     # Settings: each one recorded the first time potato mode sets it, so a value the player changes afterwards stays.
     $changed = @{}
+    # potato.txt changed since a setting was recorded (2026-10-22: 60 fps to unlimited, the sky back on): where the file
+    # still has the value potato mode wrote, the new rule's value goes in, or the player's own when the rule is gone.
+    $keepSets = @()
+    foreach ($r in $recSets) {
+      $rule = @($potatoSets | Where-Object { $_.File -eq $r.File -and $_.Section -eq $r.Section -and $_.Key -eq $r.Key })[0]
+      if ($rule -and $rule.Value -ceq $r.New) { $keepSets += $r; continue }
+      $to = if ($rule) { $rule.Value } else { $r.Old }
+      $path = Join-Path $Target $r.File.Replace('/', '\')
+      if (Test-Path -LiteralPath $path) {
+        $text = Read-Utf8 $path
+        $m = Find-Setting $text ([pscustomobject]@{ Kind = $(if ($r.File -eq 'options.txt') { 'kv' } elseif ($r.File.EndsWith('.toml')) { 'toml' } else { 'json' }); Section = $r.Section; Key = $r.Key })
+        if ($m -and $m.Groups[1].Value -ceq $r.New -and $to -cne $r.New) {
+          Write-Utf8 $path $text.Remove($m.Groups[1].Index, $m.Groups[1].Length).Insert($m.Groups[1].Index, $to)
+          $changed[$r.File] = 1 + $(if ($changed.ContainsKey($r.File)) { $changed[$r.File] } else { 0 })
+        }
+      }
+      if ($rule) { $keepSets += [pscustomobject]@{ File = $r.File; Section = $r.Section; Key = $r.Key; Old = $r.Old; New = $rule.Value } }
+    }
+    $recSets = $keepSets
     foreach ($s in $potatoSets) {
       $path = Join-Path $Target $s.File.Replace('/', '\')
       if (-not (Test-Path -LiteralPath $path)) { continue }   # written by the game on its first start: set on the next run
@@ -1602,16 +1660,9 @@ if ($Launcher -eq 'ATLauncher') {
     # ATLauncher is open (it is starting the game) and would write its own copy back: next time by hand, if needed.
     if ($lastKey -ne $argKey) { Write-Host "`nThe speed settings changed: run the updater yourself once, with ATLauncher closed, to set them." -ForegroundColor Yellow }
   } else {
-    for ($try = 0; (Test-ATLauncherOpen) -and $try -lt 3; $try++) {
-      Write-Host "`nATLauncher is open. Close it completely (its window, and its icon by the clock if there is one), then press Enter here." -ForegroundColor Yellow
-      Write-Host '  (It keeps its own copy of the instance settings and would write it back over the new ones.) ' -NoNewline
-      if ($null -eq [Console]::ReadLine()) { break }
-    }
-    if (Test-ATLauncherOpen) {
-      Write-Host "`nATLauncher stayed open, so its speed settings were not written. Run the updater again with it closed, or" -ForegroundColor Yellow
-      Write-Host '  set them by hand: LAUNCH-ARGUMENTS.txt in your ATM10 folder has the steps.' -ForegroundColor Yellow
-    } else {
-      $json = [IO.File]::ReadAllText($atlJson)
+    # The instance's settings as they should be; ATLauncher is closed (by the updater) only when they differ, since it
+    # keeps its own copy and would write it back over the new ones.
+    $makeNew = {
       $new = Set-JsonKey $json 'javaArguments' (Json-Text $argRest)
       $new = Set-JsonKey $new 'maximumMemory' "$memMb"
       if ($javaOk) { $new = Set-JsonKey $new 'javaPath' (Json-Text $javaHome); $new = Set-JsonKey $new 'useJavaProvidedByMinecraft' 'false' }
@@ -1625,6 +1676,23 @@ if ($Launcher -eq 'ATLauncher') {
           Write-Host "`nThis instance already has a pre-launch command of its own, so the update check at each start was not added." -ForegroundColor Yellow
         }
       }
+      $new
+    }
+    $json = [IO.File]::ReadAllText($atlJson)
+    $new = & $makeNew
+    if ($new -cne $json -and -not (Close-ATLauncher)) {
+      for ($try = 0; (Test-ATLauncherOpen) -and $try -lt 3; $try++) {
+        Write-Host "`nATLauncher is open. Close it completely (its window, and its icon by the clock if there is one), then press Enter here." -ForegroundColor Yellow
+        Write-Host '  (It keeps its own copy of the instance settings and would write it back over the new ones.) ' -NoNewline
+        if ($null -eq [Console]::ReadLine()) { break }
+      }
+    }
+    if ($new -cne $json -and (Test-ATLauncherOpen)) {
+      Write-Host "`nATLauncher stayed open, so its speed settings were not written. Run the updater again with it closed, or" -ForegroundColor Yellow
+      Write-Host '  set them by hand: LAUNCH-ARGUMENTS.txt in your ATM10 folder has the steps.' -ForegroundColor Yellow
+    } else {
+      $json = [IO.File]::ReadAllText($atlJson)   # again: ATLauncher may have saved it as it closed
+      $new = & $makeNew
       if ($new -cne $json) {
         if (-not (Test-Path -LiteralPath "$atlJson.bak-lionel")) { Copy-Item -LiteralPath $atlJson "$atlJson.bak-lionel" }
         [IO.File]::WriteAllText($atlJson, $new, (New-Object System.Text.UTF8Encoding($false)))
@@ -1682,6 +1750,10 @@ if ($fromGame) { Write-Host "`nThe game starts now." -ForegroundColor Cyan; exit
 $instanceName = Split-Path -Leaf $(if ((Split-Path -Leaf $Target) -match '^\.?minecraft$') { Split-Path -Parent $Target } else { $Target })
 if ($atlMade) { $instanceName = $atlMade }
 Write-Host "`nWhat to do now:" -ForegroundColor Cyan
+if ($atlReopen -and -not $atlMade) {   # the updater closed it (Close-ATLauncher): open again
+  Start-Launcher $launcherExe
+  Write-Host '  ATLauncher is opening again.'
+}
 if ($atlMade) {
   # The instance was written with ATLauncher closed, so the sign-in comes now (Install-AtlInstance).
   Start-Launcher $launcherExe

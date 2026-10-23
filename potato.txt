@@ -51,7 +51,7 @@ set|options.txt|kv|-|entityDistanceScaling|0.5
 set|options.txt|kv|-|renderClouds|"false"
 set|options.txt|kv|-|entityShadows|false
 set|options.txt|kv|-|menuBackgroundBlurriness|0
-set|options.txt|kv|-|maxFps|60
+set|options.txt|kv|-|maxFps|260
 set|options.txt|kv|-|enableVsync|false
 set|options.txt|kv|-|prioritizeChunkUpdates|0
 
@@ -69,28 +69,30 @@ set|config/sodium-options.json|json|debug|terrain_sorting_enabled|false
 
 # Sodium Extra 0.9.3 (config/sodium-extra-options.json). Each key checked against the mixin that reads it (javap):
 # particles=false cancels every particle in the particle engine (2026-10-21, Lionel: "0 particles at all"; boss attack
-# effects made of particles are gone too). No sky (fog colour instead), sun, moon, stars, rain or snow, biome or sky
-# colours, beacon beams or armour stands. Paintings stay: Sodium Extra's painting switch is read by nothing.
+# effects made of particles are gone too). No biome colours, beacon beams, armour stands, item frames, pistons or
+# toasts. Paintings stay: Sodium Extra's painting switch is read
+# by nothing. 2026-10-22 (Lionel's own changes in his potato instance): the sky back (sky and sky colours: only fog was
+# left, and it costs next to nothing; later the same day sun, moon, stars, rain and snow too, Lionel: "i turned on the sun,
+# moon, weather, stars, and sky"), unlimited fps (260) instead of 60, item frames, pistons and all toasts off. NOT his
+# light_updates off: no light changes at all (a torch placed lights nothing until the chunk reloads).
 set|config/sodium-extra-options.json|json|animation_settings|animation|false
 set|config/sodium-extra-options.json|json|particle_settings|particles|false
 set|config/sodium-extra-options.json|json|particle_settings|rain_splash|false
 set|config/sodium-extra-options.json|json|particle_settings|block_break|false
 set|config/sodium-extra-options.json|json|particle_settings|block_breaking|false
-set|config/sodium-extra-options.json|json|detail_settings|sky|false
-set|config/sodium-extra-options.json|json|detail_settings|sun|false
-set|config/sodium-extra-options.json|json|detail_settings|moon|false
-set|config/sodium-extra-options.json|json|detail_settings|stars|false
-set|config/sodium-extra-options.json|json|detail_settings|rain_snow|false
 set|config/sodium-extra-options.json|json|detail_settings|biome_colors|false
-set|config/sodium-extra-options.json|json|detail_settings|sky_colors|false
 set|config/sodium-extra-options.json|json|render_settings|beacon_beam|false
 set|config/sodium-extra-options.json|json|render_settings|armor_stand|false
 set|config/sodium-extra-options.json|json|render_settings|limit_beacon_beam_height|true
 set|config/sodium-extra-options.json|json|render_settings|enchanting_table_book|false
 set|config/sodium-extra-options.json|json|render_settings|item_frame_name_tag|false
+set|config/sodium-extra-options.json|json|render_settings|item_frame|false
+set|config/sodium-extra-options.json|json|render_settings|piston|false
 set|config/sodium-extra-options.json|json|extra_settings|advancement_toast|false
 set|config/sodium-extra-options.json|json|extra_settings|recipe_toast|false
 set|config/sodium-extra-options.json|json|extra_settings|tutorial_toast|false
+set|config/sodium-extra-options.json|json|extra_settings|system_toast|false
+set|config/sodium-extra-options.json|json|extra_settings|toasts|false
 
 # Chloride 1.8.1 (config/chloride-client.toml). Culling distances are squared blocks across (144 = 12 blocks, 576 = 24,
 # 1024 = 32) and plain blocks up and down. Block entities (chests, machines, drawers, signs) within 12 blocks, other
